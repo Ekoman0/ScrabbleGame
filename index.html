@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Türkçe Kelime Oyunu</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="menu-screen" class="screen">
+        <h1>Kelime Oyunu</h1>
+        <p>Oyuncu Sayısını Seçin:</p>
+        <div class="button-group" id="player-buttons">
+            <button onclick="preparePlayers(2)">2 Oyuncu</button>
+            <button onclick="preparePlayers(3)">3 Oyuncu</button>
+            <button onclick="preparePlayers(4)">4 Oyuncu</button>
+        </div>
+        
+        <div id="name-input-area" style="display: none; width: 100%;">
+            <div id="name-inputs"></div>
+            <button onclick="startGameWithNames()" style="background-color: #2ecc71; color: white; padding: 10px 20px; font-size: 16px; border: none; border-radius: 5px; margin-top: 10px; cursor: pointer;">Oyunu Başlat</button>
+        </div>
+    </div>
+
+    <div id="game-screen" class="screen" style="display: none;">
+        
+        <div class="top-bar">
+            <div id="score-board"></div>
+            <div id="status-panel">
+                <div id="bag-info">Torbada Kalan: <span id="bag-count">100</span> Harf</div>
+                <div id="game-status-msg"></div>
+            </div>
+        </div>
+        
+        <div id="board-container">
+            <div id="board"></div>
+        </div>
+
+        <div id="controls">
+            <h3 id="turn-info">Sıra: Oyuncu 1</h3>
+            
+            <div id="player-rack" class="rack-container"></div>
+            
+            <div class="action-buttons">
+                <button class="action-btn pass-btn" onclick="passTurn()">Pas Geç</button>
+                <button id="swap-btn" class="action-btn swap-btn" onclick="swapLetters()">Harf Değiştir</button>
+                <button class="action-btn confirm-btn" onclick="checkWord()">Onayla</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="fx-layer" style="position:fixed; top:0; left:0; pointer-events:none; z-index:9999; width:100%; height:100%;"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

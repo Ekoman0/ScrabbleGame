@@ -1,0 +1,248 @@
+/* Genel Sayfa Yapısı */
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #2c3e50;
+        margin: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        overflow-y: auto; /* SCROLL AÇILDI */
+    }
+
+    /* Ana Ekran Kapsayıcısı */
+    .screen {
+        text-align: center;
+        width: 100vw;
+        min-height: 100vh;
+        max-width: 500px;
+        background: #ecf0f1;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    }
+
+    /* Üst Panel */
+    .top-bar {
+        background-color: #34495e;
+        color: white;
+        padding: 10px;
+        border-bottom: 3px solid #e67e22;
+    }
+
+    #score-board {
+        display: flex;
+        justify-content: space-around;
+        font-size: 14px;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+
+    #status-panel {
+        font-size: 12px;
+        background: rgba(0,0,0,0.2);
+        padding: 5px;
+        border-radius: 5px;
+    }
+
+    /* Oyun Tahtası */
+    #board-container {
+        flex: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 10px;
+        background-color: #7f8c8d;
+        touch-action: none;
+    }
+    #board {
+        display: grid;
+        grid-template-columns: repeat(15, 1fr);
+        grid-template-rows: repeat(15, 1fr);
+        gap: 1px;
+        background-color: #2c3e50;
+        padding: 2px;
+
+        width: min(95vw, 95vh - 180px);
+        height: min(95vw, 95vh - 180px);
+
+        touch-action: none;
+    }
+
+    /* Hücre */
+    .cell {
+        background-color: #bdc3c7;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 5px;
+        text-align: center;
+        font-weight: bold;
+        text-transform: uppercase;
+        position: relative;
+        user-select: none;
+    }
+
+    /* Bonus */
+    .tw { background-color: #ff3838 !important; color: white; }
+    .dw { background-color: #ffafbd !important; }
+    .tl { background-color: #00a8ff !important; color: white; }
+    .dl { background-color: #70a1ff !important; }
+    .center { background-color: #ffafbd !important; font-size: 12px !important; }
+
+    /* Harf Taşı */
+    .tile {
+        width: 100%;
+        height: 100%;
+        background-color: #f1c40f;
+        border: 1px solid #d4ac0d;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-weight: bold;
+        position: absolute;
+        top: 0; left: 0;
+        cursor: pointer;
+        color: black;
+        z-index: 10;
+        border-radius: 2px;
+        box-shadow: inset 0 -2px 0 rgba(0,0,0,0.2);
+    }
+
+    .tile.fixed {
+        background-color: #e67e22;
+        border-color: #d35400;
+    }
+
+    .tile .letter { font-size: 16px; }
+    .tile .point { font-size: 8px; position: absolute; bottom: 1px; right: 2px; }
+
+    /* ALT PANEL (EN KRİTİK KISIM) */
+    #controls {
+        background-color: #ecf0f1;
+        padding: 10px;
+        border-top: 2px solid #bdc3c7;
+
+        position: sticky;  /* SABİT ALT */
+        bottom: 0;
+        z-index: 20;
+    }
+
+    /* Turn info */
+    #turn-info {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+        color: #2c3e50;
+    }
+
+    /* Istaka */
+    .rack-container {
+        display: flex;
+        justify-content: center;
+        gap: 6px;
+        background: #34495e;
+        padding: 6px;
+        margin-bottom: 10px;
+        border-radius: 8px;
+        min-height: 45px;
+        box-shadow: inset 0 2px 5px rgba(0,0,0,0.3);
+    }
+
+    .rack-container .tile { 
+        position: relative; 
+        width: 34px; 
+        height: 34px; 
+    }
+
+    /* Butonlar */
+    .action-buttons { 
+        display: flex; 
+        justify-content: center; 
+        gap: 6px; 
+    }
+
+    .action-btn {
+        flex: 1;
+        max-width: 120px;
+        padding: 10px 5px;
+        font-size: 12px;
+        border: none;
+        border-radius: 6px;
+        color: white;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    .action-btn:active { transform: scale(0.95); }
+
+    /* Renkler */
+    .action-btn[onclick*="passTurn"] { background-color: #e67e22; }
+    .action-btn[onclick*="swapLetters"] { background-color: #9b59b6; }
+    .action-btn[onclick*="checkWord"] { background-color: #2ecc71; }
+
+    .action-btn:disabled {
+        background-color: #95a5a6 !important;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    /* Menü */
+    .button-group button {
+        display: block;
+        width: 80%;
+        margin: 10px auto;
+        padding: 15px;
+        font-size: 18px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+
+    /* ================= YENİ EKLENEN KISIMLAR ================= */
+
+    /* Doğru kelime onaylanınca yeşil parlama efekti */
+    .tile.success {
+        background-color: #2ecc71 !important;
+        border-color: #27ae60 !important;
+        animation: glow 1s ease-out;
+    }
+
+    @keyframes glow {
+        0% { transform: scale(1); box-shadow: 0 0 0px #2ecc71; }
+        50% { transform: scale(1.1); box-shadow: 0 0 20px #2ecc71; z-index: 50; }
+        100% { transform: scale(1); box-shadow: 0 0 0px #2ecc71; }
+    }
+
+    /* İsim girme kutuları tasarımı */
+    .player-name-input {
+        width: 80%;
+        padding: 10px;
+        margin: 5px auto;
+        display: block;
+        font-size: 16px;
+        border: 2px solid #3498db;
+        border-radius: 5px;
+        text-align: center;
+    }
+
+    /* ---------------------------------------------------
+       YENİ: Havaya yükselen puan efekti 
+       --------------------------------------------------- */
+    .floating-score {
+        position: absolute;
+        color: #2ecc71; /* Puanın rengi, güzel bir yeşil */
+        font-size: 28px;
+        font-weight: bold;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.8); /* Daha net okunması için gölge */
+        pointer-events: none; /* Tıklamayı engellemesin */
+        z-index: 10000;
+        animation: floatUp 2s ease-out forwards; /* 2 saniyede yukarı çıkıp kaybolacak */
+    }
+
+    @keyframes floatUp {
+        0% { transform: translateY(0) scale(1); opacity: 1; }
+        30% { transform: translateY(-30px) scale(1.2); opacity: 1; }
+        100% { transform: translateY(-120px) scale(1); opacity: 0; }
+    }
