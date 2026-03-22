@@ -7,7 +7,7 @@
         justify-content: center;
         align-items: center;
         min-height: 100vh;
-        overflow-y: auto; /* SCROLL AÇILDI */
+        overflow-y: auto; 
     }
 
     /* Ana Ekran Kapsayıcısı */
@@ -117,25 +117,22 @@
     .tile .letter { font-size: 16px; }
     .tile .point { font-size: 8px; position: absolute; bottom: 1px; right: 2px; }
 
-    /* ALT PANEL (EN KRİTİK KISIM) */
+    /* ALT PANEL */
     #controls {
         background-color: #ecf0f1;
         padding: 10px;
         border-top: 2px solid #bdc3c7;
-
-        position: sticky;  /* SABİT ALT */
+        position: sticky; 
         bottom: 0;
         z-index: 20;
     }
 
-    /* Turn info */
     #turn-info {
         margin: 0 0 8px 0;
         font-size: 14px;
         color: #2c3e50;
     }
 
-    /* Istaka */
     .rack-container {
         display: flex;
         justify-content: center;
@@ -154,7 +151,6 @@
         height: 34px; 
     }
 
-    /* Butonlar */
     .action-buttons { 
         display: flex; 
         justify-content: center; 
@@ -175,7 +171,6 @@
 
     .action-btn:active { transform: scale(0.95); }
 
-    /* Renkler */
     .action-btn[onclick*="passTurn"] { background-color: #e67e22; }
     .action-btn[onclick*="swapLetters"] { background-color: #9b59b6; }
     .action-btn[onclick*="checkWord"] { background-color: #2ecc71; }
@@ -186,7 +181,6 @@
         opacity: 0.6;
     }
 
-    /* Menü */
     .button-group button {
         display: block;
         width: 80%;
@@ -200,9 +194,6 @@
         cursor: pointer;
     }
 
-    /* ================= YENİ EKLENEN KISIMLAR ================= */
-
-    /* Doğru kelime onaylanınca yeşil parlama efekti */
     .tile.success {
         background-color: #2ecc71 !important;
         border-color: #27ae60 !important;
@@ -215,7 +206,6 @@
         100% { transform: scale(1); box-shadow: 0 0 0px #2ecc71; }
     }
 
-    /* İsim girme kutuları tasarımı */
     .player-name-input {
         width: 80%;
         padding: 10px;
@@ -227,22 +217,132 @@
         text-align: center;
     }
 
-    /* ---------------------------------------------------
-       YENİ: Havaya yükselen puan efekti 
-       --------------------------------------------------- */
     .floating-score {
         position: absolute;
-        color: #2ecc71; /* Puanın rengi, güzel bir yeşil */
+        color: #2ecc71; 
         font-size: 28px;
         font-weight: bold;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.8); /* Daha net okunması için gölge */
-        pointer-events: none; /* Tıklamayı engellemesin */
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.8); 
+        pointer-events: none; 
         z-index: 10000;
-        animation: floatUp 2s ease-out forwards; /* 2 saniyede yukarı çıkıp kaybolacak */
+        animation: floatUp 2s ease-out forwards; 
     }
 
     @keyframes floatUp {
         0% { transform: translateY(0) scale(1); opacity: 1; }
         30% { transform: translateY(-30px) scale(1.2); opacity: 1; }
         100% { transform: translateY(-120px) scale(1); opacity: 0; }
+    }
+
+    /* ================= YENİ: LOBİ VE CHAT TASARIMLARI ================= */
+    .lobby-card {
+        background: white;
+        padding: 15px;
+        margin: 15px auto;
+        width: 85%;
+        border-radius: 8px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        border: 2px solid #3498db;
+    }
+
+    #lobby-players-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        text-align: left;
+        max-height: 150px;
+        overflow-y: auto;
+    }
+
+    #lobby-players-list li {
+        padding: 10px;
+        border-bottom: 1px solid #ecf0f1;
+        font-weight: bold;
+        color: #2c3e50;
+        display: flex;
+        align-items: center;
+    }
+
+    #lobby-players-list li::before {
+        content: '👤';
+        margin-right: 8px;
+        font-size: 16px;
+    }
+
+    #chat-container {
+        width: 100%;
+        background: #ecf0f1;
+        border-top: 2px solid #bdc3c7;
+        display: flex;
+        flex-direction: column;
+        height: 200px;
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+    }
+
+    #chat-header {
+        background: #34495e;
+        color: white;
+        padding: 5px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+
+    #chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .chat-msg {
+        background: #bdc3c7;
+        padding: 6px 10px;
+        border-radius: 8px;
+        width: fit-content;
+        max-width: 80%;
+        text-align: left;
+        font-size: 13px;
+        word-wrap: break-word;
+    }
+
+    .chat-msg.self {
+        background: #3498db;
+        color: white;
+        align-self: flex-end;
+    }
+
+    .chat-msg span {
+        font-weight: bold;
+        font-size: 11px;
+        display: block;
+        margin-bottom: 2px;
+        color: #2c3e50;
+    }
+    
+    .chat-msg.self span {
+        color: #ecf0f1;
+    }
+
+    #chat-input-area {
+        display: flex;
+        border-top: 1px solid #bdc3c7;
+    }
+
+    #chat-input {
+        flex: 1;
+        border: none;
+        padding: 12px;
+        outline: none;
+        font-size: 14px;
+    }
+
+    #chat-input-area button {
+        border: none;
+        background: #2ecc71;
+        color: white;
+        padding: 0 20px;
+        font-weight: bold;
+        cursor: pointer;
     }

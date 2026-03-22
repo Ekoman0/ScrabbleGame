@@ -5,22 +5,54 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Türkçe Kelime Oyunu</title>
     <link rel="stylesheet" href="style.css">
+    
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 </head>
 <body>
 
     <div id="menu-screen" class="screen">
         <h1>Kelime Oyunu</h1>
-        <p>Oyuncu Sayısını Seçin:</p>
-        <div class="button-group" id="player-buttons">
-            <button onclick="preparePlayers(2)">2 Oyuncu</button>
-            <button onclick="preparePlayers(3)">3 Oyuncu</button>
-            <button onclick="preparePlayers(4)">4 Oyuncu</button>
-        </div>
         
-        <div id="name-input-area" style="display: none; width: 100%;">
-            <div id="name-inputs"></div>
-            <button onclick="startGameWithNames()" style="background-color: #2ecc71; color: white; padding: 10px 20px; font-size: 16px; border: none; border-radius: 5px; margin-top: 10px; cursor: pointer;">Oyunu Başlat</button>
+        <div id="mode-selection" class="button-group">
+            <button onclick="showOfflineMenu()" style="background-color: #f39c12;">Çevrimdışı (Aynı Cihazda) Oyna</button>
+            <button onclick="showOnlineMenu()" style="background-color: #8e44ad;">Çevrimiçi (İnternetten) Oyna</button>
         </div>
+
+        <div id="offline-menu" style="display: none;">
+            <p>Oyuncu Sayısını Seçin:</p>
+            <div class="button-group" id="player-buttons">
+                <button onclick="preparePlayers(2)">2 Oyuncu</button>
+                <button onclick="preparePlayers(3)">3 Oyuncu</button>
+                <button onclick="preparePlayers(4)">4 Oyuncu</button>
+            </div>
+            
+            <div id="name-input-area" style="display: none; width: 100%;">
+                <div id="name-inputs"></div>
+                <button onclick="startGameWithNames()" style="background-color: #2ecc71; color: white; padding: 10px 20px; font-size: 16px; border: none; border-radius: 5px; margin-top: 10px; cursor: pointer;">Oyunu Başlat</button>
+            </div>
+        </div>
+
+        <div id="online-menu" style="display: none;">
+            <p>Çevrimiçi Oyun</p>
+            <input type="text" id="online-player-name" class="player-name-input" placeholder="Kendi Adınızı Girin">
+            <div class="button-group">
+                <button id="btn-create-room" onclick="createOnlineRoom()" style="background-color: #2980b9;">Yeni Oda Kur</button>
+                <button id="btn-join-room" onclick="joinOnlineRoom()" style="background-color: #27ae60; display: none;">Odaya Katıl</button>
+                
+                <div id="online-waiting-area" style="display:none;" class="lobby-card">
+                    <p id="room-link-text" style="font-size: 14px; color: #34495e; padding: 5px; margin-bottom: 10px;"></p>
+                    
+                    <h3 style="color: #2c3e50; margin: 10px 0;">Lobi (<span id="lobby-count">1</span> Kişi)</h3>
+                    <ul id="lobby-players-list">
+                        </ul>
+                    
+                    <p style="font-size: 12px; color: #7f8c8d; margin-top: 15px;">Tüm arkadaşlarınız listeye katıldığında oyunu başlatabilirsiniz.</p>
+                    <button id="btn-start-online" onclick="startOnlineGame()" style="background-color: #e74c3c;">Oyunu Başlat</button>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <div id="game-screen" class="screen" style="display: none;">
@@ -48,6 +80,16 @@
                 <button class="action-btn confirm-btn" onclick="checkWord()">Onayla</button>
             </div>
         </div>
+
+        <div id="chat-container" style="display: none;">
+            <div id="chat-header">Oda Sohbeti</div>
+            <div id="chat-messages"></div>
+            <div id="chat-input-area">
+                <input type="text" id="chat-input" placeholder="Mesaj yaz..." onkeypress="handleChatKeyPress(event)">
+                <button onclick="sendChatMessage()">Gönder</button>
+            </div>
+        </div>
+
     </div>
 
     <div id="fx-layer" style="position:fixed; top:0; left:0; pointer-events:none; z-index:9999; width:100%; height:100%;"></div>

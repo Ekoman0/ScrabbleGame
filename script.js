@@ -1,3 +1,289 @@
+// ================= FIREBASE AYARLARI =================
+const firebaseConfig = {
+    apiKey: "AIzaSyBSCuFHGw0SEKNb6AdQIdPvGeSgfD20qY4",
+    authDomain: "scrabblegame-b3ed4.firebaseapp.com",
+    databaseURL: "https://scrabblegame-b3ed4-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "scrabblegame-b3ed4",
+    storageBucket: "scrabblegame-b3ed4.firebasestorage.app",
+    messagingSenderId: "932769983173",
+    appId: "1:932769983173:web:959037670e8621ee851eac",
+    measurementId: "G-0H0H9R004B"
+};
+
+// Firebase Başlatma
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+let isOnlineMode = false;
+let myOnlineRoomId = null;
+let roomRef = null;
+let myPlayerIndex = -1; 
+
+// ================= MENÜ YÖNETİMİ =================
+function showOfflineMenu() {
+    isOnlineMode = false;
+    document.getElementById('mode-selection').style.display = 'none';
+    document.getElementById('offline-menu').style.display = 'block';
+}
+
+function showOnlineMenu() {
+    document.getElementById('mode-selection').style.display = 'none';
+    document.getElementById('online-menu').style.display = 'block';
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomParam = urlParams.get('oda');
+    
+    if (roomParam) {
+        myOnlineRoomId = roomParam;
+        document.getElementById('btn-create-room').style.display = 'none';
+        document.getElementById('btn-join-room').style.display = 'block';
+        document.getElementById('room-link-text').innerText = `Davet Geldi: Oda ${roomParam}`;
+    }
+}
+
+// 1. ODA KURAN KİŞİ
+function createOnlineRoom() {
+    let playerName = document.getElementById('online-player-name').value;
+    if (playerName.trim() === "") { alert("Lütfen adınızı girin!"); return; }
+
+    const createBtn = document.getElementById('btn-create-room');
+    createBtn.innerText = "Oda Kuruluyor...";
+    createBtn.disabled = true;
+
+    myOnlineRoomId = Math.random().toString(36).substring(2, 7).toUpperCase();
+    roomRef = db.ref('rooms/' + myOnlineRoomId);
+    
+    isOnlineMode = true;
+    myPlayerIndex = 0; 
+    playerCount = 1;
+
+    initializeBag(); 
+    players = [{ name: playerName, score: 0, rack: [] }];
+    refillRack(players[0]); 
+
+    roomRef.set({
+        status: 'waiting',
+        players: players,
+        tileBag: tileBag,
+        currentPlayerIndex: 0,
+        board: [],
+        firstMove: true 
+    }).then(() => {
+        let roomUrl = window.location.origin + window.location.pathname + "?oda=" + myOnlineRoomId;
+        document.getElementById('room-link-text').innerHTML = `<b>Oda: ${myOnlineRoomId}</b><br><a href="${roomUrl}" target="_blank" style="color:#3498db; word-break: break-all;">${roomUrl}</a>`;
+        document.getElementById('online-waiting-area').style.display = 'block';
+        createBtn.style.display = 'none';
+
+        listenToRoom(); 
+        listenToChat(); // YENİ: Chat'i dinlemeye başla
+    }).catch(error => {
+        alert("Bağlantı Hatası: " + error.message);
+        createBtn.innerText = "Yeni Oda Kur";
+        createBtn.disabled = false;
+    });
+}
+
+// 2. ODAYA KATILAN KİŞİ
+function joinOnlineRoom() {
+    let playerName = document.getElementById('online-player-name').value;
+    if (playerName.trim() === "") { alert("Lütfen adınızı girin!"); return; }
+
+    const joinBtn = document.getElementById('btn-join-room');
+    joinBtn.innerText = "Bağlanıyor...";
+    joinBtn.disabled = true;
+
+    roomRef = db.ref('rooms/' + myOnlineRoomId);
+    
+    roomRef.once('value').then(snapshot => {
+        const data = snapshot.val();
+        if (!data) { alert("Hata: Oda bulunamadı!"); joinBtn.innerText = "Odaya Katıl"; joinBtn.disabled = false; return; }
+        if (data.status === 'playing') { alert("Hata: Bu oyun zaten başlamış!"); joinBtn.innerText = "Odaya Katıl"; joinBtn.disabled = false; return; }
+
+        isOnlineMode = true;
+        players = data.players || [];
+        myPlayerIndex = players.length; 
+        playerCount = players.length + 1;
+
+        tileBag = data.tileBag || []; 
+        
+        let newPlayer = { name: playerName, score: 0, rack: [] };
+        players.push(newPlayer);
+        refillRack(players[myPlayerIndex]); 
+
+        roomRef.update({
+            players: players,
+            tileBag: tileBag 
+        });
+
+        document.getElementById('online-waiting-area').style.display = 'block';
+        document.getElementById('room-link-text').innerText = "Bağlanıldı! Kurucunun başlatması bekleniyor...";
+        joinBtn.style.display = 'none';
+
+        listenToRoom(); 
+        listenToChat(); // YENİ: Chat'i dinlemeye başla
+    }).catch(error => {
+        alert("Bağlantı Hatası: " + error.message);
+        joinBtn.innerText = "Odaya Katıl";
+        joinBtn.disabled = false;
+    });
+}
+
+function startOnlineGame() {
+    if (players.length < 2) { alert("Başlamak için en az 2 kişi olmalı!"); return; }
+    roomRef.update({ status: 'playing' });
+}
+
+// ================= ODA DİNLEYİCİSİ VE LOBİ =================
+function listenToRoom() {
+    roomRef.on('value', snapshot => {
+        const data = snapshot.val();
+        if (!data) return;
+
+        players = data.players || [];
+        tileBag = data.tileBag || [];
+        currentPlayerIndex = data.currentPlayerIndex || 0;
+        playerCount = players.length;
+        
+        if (data.firstMove !== undefined) {
+            firstMove = data.firstMove;
+        }
+
+        // YENİ: Lobi Ekranı Güncellemesi
+        if (data.status === 'waiting') {
+            document.getElementById('lobby-count').innerText = players.length;
+            const listElement = document.getElementById('lobby-players-list');
+            listElement.innerHTML = players.map(p => `<li>${p.name}</li>`).join('');
+            
+            // Eğer ben kurucu değilsem başlat butonunu gizleyebilirim (İsteğe bağlı, şimdilik duruyor)
+        }
+        
+        // Oyun Başlama Anı
+        if (data.status === 'playing' && document.getElementById('game-screen').style.display === 'none') {
+            document.getElementById('menu-screen').style.display = 'none';
+            document.getElementById('game-screen').style.display = 'flex';
+            document.getElementById('chat-container').style.display = 'flex'; // Chat'i göster
+            if(document.getElementById('board').innerHTML === '') createBoard();
+        }
+
+        // Oyun İçi Tahta Senkronizasyonu
+        if (data.status === 'playing') {
+            document.querySelectorAll('.tile.fixed').forEach(t => t.remove());
+            
+            if (currentPlayerIndex !== myPlayerIndex) {
+                 document.querySelectorAll('.tile:not(.fixed)').forEach(t => t.remove());
+            }
+            
+            let boardState = data.board || [];
+            let tempBoardState = data.tempBoard || []; 
+            
+            boardState.forEach(item => {
+                let cell = document.getElementById(`cell-${item.index}`);
+                if (cell && !cell.querySelector('.tile.fixed')) {
+                    let div = document.createElement('div');
+                    div.className = 'tile fixed';
+                    div.innerHTML = `<span class="letter">${item.letter}</span><span class="point">${item.points}</span>`;
+                    cell.appendChild(div);
+                }
+            });
+            
+            if (currentPlayerIndex !== myPlayerIndex) {
+                tempBoardState.forEach(item => {
+                    let cell = document.getElementById(`cell-${item.index}`);
+                    if (cell && !cell.querySelector('.tile')) {
+                        let div = document.createElement('div');
+                        div.className = 'tile'; 
+                        div.innerHTML = `<span class="letter">${item.letter}</span><span class="point">${item.points}</span>`;
+                        cell.appendChild(div);
+                    }
+                });
+            }
+
+            updateUI();
+        }
+    });
+}
+
+// ================= YENİ: CHAT SİSTEMİ =================
+function listenToChat() {
+    roomRef.child('chat').on('child_added', snapshot => {
+        const msg = snapshot.val();
+        const msgDiv = document.createElement('div');
+        
+        // Kendi mesajımızsa sağa yasla ve mavi yap
+        if (msg.sender === players[myPlayerIndex].name) {
+            msgDiv.className = 'chat-msg self';
+        } else {
+            msgDiv.className = 'chat-msg';
+        }
+        
+        msgDiv.innerHTML = `<span>${msg.sender}</span>${msg.text}`;
+        
+        const chatMessages = document.getElementById('chat-messages');
+        chatMessages.appendChild(msgDiv);
+        
+        // Otomatik en aşağıya kaydır
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+}
+
+function sendChatMessage() {
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (text === "") return;
+    
+    // Mesajı Firebase'e gönder
+    roomRef.child('chat').push({
+        sender: players[myPlayerIndex].name,
+        text: text,
+        timestamp: firebase.database.ServerValue.TIMESTAMP
+    });
+    
+    // Kutuyu temizle
+    input.value = "";
+}
+
+function handleChatKeyPress(e) {
+    if (e.key === "Enter") {
+        sendChatMessage();
+    }
+}
+
+
+function pushGameStateToFirebase() {
+    if (!isOnlineMode || !roomRef) return;
+
+    let boardState = [];
+    for (let i = 0; i < 225; i++) {
+        let cell = document.getElementById(`cell-${i}`);
+        let tile = cell.querySelector('.tile.fixed');
+        if (tile) {
+            boardState.push({
+                index: i,
+                letter: tile.querySelector('.letter').innerText,
+                points: parseInt(tile.querySelector('.point').innerText)
+            });
+        }
+    }
+
+    let tempBoardState = tempTiles.map(t => {
+        return {
+            index: t.cellIndex,
+            letter: t.letter,
+            points: t.points
+        };
+    });
+
+    roomRef.update({
+        board: boardState,
+        tempBoard: tempBoardState, 
+        players: players,
+        tileBag: tileBag,
+        currentPlayerIndex: currentPlayerIndex,
+        firstMove: firstMove 
+    });
+}
+
+
 // ================= DICTIONARY =================
 let DICT = null;
 async function loadDictionary() {
@@ -17,14 +303,14 @@ async function loadDictionary() {
 loadDictionary().then(set => { DICT = set; console.log("Sözlük yüklendi:", DICT.size); });
 
 // ================= GAME STATE =================
-let playerCount = 0;
 let currentPlayerIndex = 0;
+let playerCount = 0;
 let players = [];
 let tileBag = [];
 let draggedTileInfo = null;
 let firstMove = true;
 let tempTiles = [];
-let gameOverCountdown = -1; // -1: Henüz başlamadı, 0-3: Geri sayım
+let gameOverCountdown = -1;
 
 const bonuses = {
     tw: [0, 7, 14, 105, 119, 210, 217, 224],
@@ -51,7 +337,6 @@ const letterDistribution = [
     { letter: 'Z', points: 4, count: 2 }
 ];
 
-// 4- Geri tuşuna basınca hemen çıkmasını engelleme
 window.onbeforeunload = function() {
     if (document.getElementById('game-screen').style.display !== 'none') {
         return "Oyundan çıkmak istediğinize emin misiniz? İlerleyişiniz kaybolacak.";
@@ -60,7 +345,6 @@ window.onbeforeunload = function() {
 
 // ================= CORE FUNCTIONS =================
 
-// 3- Oyuncular isim girebilsin kısmı (Ön Hazırlık)
 function preparePlayers(num) {
     playerCount = num;
     document.getElementById('player-buttons').style.display = 'none';
@@ -74,7 +358,6 @@ function preparePlayers(num) {
     document.getElementById('name-input-area').style.display = 'block';
 }
 
-// Oyunu asıl başlatan kısım
 function startGameWithNames() {
     if (!DICT) { alert("Sözlük yükleniyor..."); return; }
     
@@ -85,11 +368,11 @@ function startGameWithNames() {
         players.push({ name: nameVal, score: 0, rack: [] });
     }
 
-    // İlk oyuncu rastgele belirlensin
     currentPlayerIndex = Math.floor(Math.random() * playerCount);
     
     document.getElementById('menu-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'flex';
+    document.getElementById('chat-container').style.display = 'none'; // Offline modda chat kapalı
     
     initializeBag();
     players.forEach(p => refillRack(p));
@@ -97,10 +380,6 @@ function startGameWithNames() {
     updateUI();
     
     alert(`Oyun Başlıyor! İlk sıradaki oyuncu rastgele seçildi:\n>>> ${players[currentPlayerIndex].name} <<<`);
-}
-
-function startGame(selectedPlayers) {
-    preparePlayers(selectedPlayers);
 }
 
 function initializeBag() {
@@ -135,6 +414,12 @@ function createBoard() {
 
 function handleDrop(event, cellIndex) {
     event.preventDefault();
+
+    if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) {
+        alert("Şu an sıra sizde değil, bekleyin!");
+        return;
+    }
+
     const cell = document.getElementById(`cell-${cellIndex}`);
     
     if (cell.querySelector('.tile')) {
@@ -145,10 +430,13 @@ function handleDrop(event, cellIndex) {
     
     if (draggedTileInfo) {
         tempTiles.push({ ...draggedTileInfo, cellIndex: cellIndex });
-        players[currentPlayerIndex].rack.splice(draggedTileInfo.rackIndex, 1);
+        let activePlayer = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
+        activePlayer.rack.splice(draggedTileInfo.rackIndex, 1);
         draggedTileInfo = null;
         renderTempTiles();
         updateUI();
+        
+        if (isOnlineMode) pushGameStateToFirebase();
     }
 }
 
@@ -166,10 +454,13 @@ function renderTempTiles() {
 
 function undoTile(index) {
     const tile = tempTiles[index];
-    players[currentPlayerIndex].rack.push({ letter: tile.letter, points: tile.points });
+    let activePlayer = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
+    activePlayer.rack.push({ letter: tile.letter, points: tile.points });
     tempTiles.splice(index, 1);
     renderTempTiles();
     updateUI();
+    
+    if (isOnlineMode) pushGameStateToFirebase();
 }
 
 function createTileElement(tile, rackIndex) {
@@ -178,14 +469,19 @@ function createTileElement(tile, rackIndex) {
     div.draggable = true;
     div.innerHTML = `<span class="letter">${tile.letter}</span><span class="point">${tile.points}</span>`;
 
-    div.ondragstart = () => { draggedTileInfo = { ...tile, rackIndex: rackIndex }; };
+    div.ondragstart = () => { 
+        if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Sıra sizde değil!"); return; }
+        draggedTileInfo = { ...tile, rackIndex: rackIndex }; 
+    };
 
     div.addEventListener('touchstart', (e) => {
+        if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Sıra sizde değil!"); return; }
         e.preventDefault();
         draggedTileInfo = { ...tile, rackIndex: rackIndex };
     });
 
     div.addEventListener('touchmove', (e) => {
+        if(!draggedTileInfo) return;
         e.preventDefault();
         const touch = e.touches[0];
         div.style.position = 'absolute';
@@ -194,6 +490,7 @@ function createTileElement(tile, rackIndex) {
     });
 
     div.addEventListener('touchend', (e) => {
+        if(!draggedTileInfo) return;
         e.preventDefault();
         const touch = e.changedTouches[0];
         const elem = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -224,7 +521,12 @@ function updateUI() {
     ).join('');
 
     document.getElementById('bag-count').innerText = tileBag.length;
-    document.getElementById('turn-info').innerText = `Sıra: ${players[currentPlayerIndex].name}`;
+    
+    if (isOnlineMode && currentPlayerIndex === myPlayerIndex) {
+        document.getElementById('turn-info').innerHTML = `<span style="color:#2ecc71; font-weight:bold;">SIRA SENDE! Oyna!</span>`;
+    } else {
+        document.getElementById('turn-info').innerText = `Sıra: ${players[currentPlayerIndex]?.name || 'Bekleniyor...'}`;
+    }
     
     const swapBtn = document.getElementById('swap-btn');
     if (tileBag.length === 0) {
@@ -234,12 +536,19 @@ function updateUI() {
 
     const rackElement = document.getElementById('player-rack');
     rackElement.innerHTML = '';
-    players[currentPlayerIndex].rack.forEach((tile, idx) => {
-        rackElement.appendChild(createTileElement(tile, idx));
-    });
+    
+    let rackOwnerIndex = isOnlineMode ? myPlayerIndex : currentPlayerIndex;
+    
+    if (players[rackOwnerIndex] && players[rackOwnerIndex].rack) {
+        players[rackOwnerIndex].rack.forEach((tile, idx) => {
+            rackElement.appendChild(createTileElement(tile, idx));
+        });
+    }
 }
 
 function passTurn() {
+    if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Şu an sıra sizde değil!"); return; }
+
     while (tempTiles.length > 0) undoTile(0);
 
     if (tileBag.length === 0) {
@@ -256,14 +565,19 @@ function passTurn() {
     currentPlayerIndex = (currentPlayerIndex + 1) % playerCount;
     refillRack(players[currentPlayerIndex]);
     updateUI();
+
+    if (isOnlineMode) {
+        pushGameStateToFirebase();
+    }
 }
 
 // ================= ACTIONS =================
 
 function swapLetters() {
+    if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Sıra sizde değil!"); return; }
     if (tileBag.length === 0) return;
     
-    const p = players[currentPlayerIndex];
+    const p = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
     while (tempTiles.length > 0) undoTile(0);
 
     const countToSwap = Math.min(p.rack.length, tileBag.length);
@@ -276,7 +590,7 @@ function swapLetters() {
     tileBag.sort(() => Math.random() - 0.5); 
 
     alert(`${countToSwap} harf değiştirildi. Sıra geçiyor...`);
-    passTurn();
+    passTurn(); 
 }
 
 function endGame() {
@@ -286,20 +600,17 @@ function endGame() {
     location.reload(); 
 }
 
-// ================= EFEKT FONKSİYONU GÜNCELLEMESİ =================
-// GÜNCELLEME: Puan bilgisini parametre olarak aldık ve yeşil rengi süre sonunda kaldırdık
+// ================= EFEKT FONKSİYONU =================
 function triggerSuccessEffect(targetCells, scoreGained) {
     targetCells.forEach(cell => {
         const tile = cell.querySelector('.tile');
         if (tile) {
-            tile.classList.add('success'); // Yeşil yap
+            tile.classList.add('success'); 
             
-            // YENİ: 1 saniye sonra başarı class'ını sil, böylece taş normal (.fixed) rengine dönsün.
             setTimeout(() => {
                 tile.classList.remove('success');
             }, 1000);
             
-            // Konfeti parçacıkları oluştur
             const rect = cell.getBoundingClientRect();
             const fxLayer = document.getElementById('fx-layer');
             
@@ -328,7 +639,6 @@ function triggerSuccessEffect(targetCells, scoreGained) {
         }
     });
 
-    // YENİ: Uçan Puan Animasyonu
     if (targetCells.length > 0 && scoreGained > 0) {
         const firstCellRect = targetCells[0].getBoundingClientRect();
         const fxLayer = document.getElementById('fx-layer');
@@ -337,13 +647,11 @@ function triggerSuccessEffect(targetCells, scoreGained) {
         floatingScore.className = 'floating-score';
         floatingScore.innerText = "+" + scoreGained;
         
-        // Efekti yerleştirilen kelimenin başlangıç harfinin üzerine hizalayalım
         floatingScore.style.left = (firstCellRect.left + (firstCellRect.width / 2) - 10) + 'px';
         floatingScore.style.top = (firstCellRect.top - 20) + 'px';
         
         fxLayer.appendChild(floatingScore);
         
-        // Animasyon bitince elementi temizle
         setTimeout(() => {
             floatingScore.remove();
         }, 2000);
@@ -353,6 +661,7 @@ function triggerSuccessEffect(targetCells, scoreGained) {
 // ================= WORD CHECK LOGIC =================
 
 function checkWord() {
+    if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Sıra sizde değil!"); return; }
     if (!DICT || tempTiles.length === 0) return;
 
     let isConnected = false;
@@ -419,23 +728,22 @@ function checkWord() {
     scanAll(false);
 
     if (anyValidWord) {
-        // GÜNCELLEME: Artık puanı da triggerSuccessEffect'e yolluyoruz
         triggerSuccessEffect(validatedCells, totalTurnScore);
         
         setTimeout(() => {
             document.querySelectorAll('.tile:not(.fixed)').forEach(t => t.classList.add('fixed'));
             tempTiles = [];
             players[currentPlayerIndex].score += totalTurnScore;
+            
             firstMove = false;
-
+            
             if (players[currentPlayerIndex].rack.length === 0 && tileBag.length === 0) {
                 alert(`${players[currentPlayerIndex].name} tüm harflerini bitirdi! Oyun sonlanıyor.`);
                 endGame();
                 return;
             }
 
-            updateUI();
-            passTurn();
+            passTurn(); 
         }, 1000); 
         
     } else {
