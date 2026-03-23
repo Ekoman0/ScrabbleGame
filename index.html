@@ -19,6 +19,27 @@
             <button onclick="showOnlineMenu()" style="background-color: #8e44ad;">Çevrimiçi (İnternetten) Oyna</button>
         </div>
 
+        <div id="settings-panel" style="display: none;" class="lobby-card">
+            <h3>Oyun Ayarları</h3>
+            <div class="setting-item">
+                <label>Harita Şekli:</label>
+                <select id="map-select">
+                    <option value="classic">Klasik Harita</option>
+                    <option value="cross">Çapraz Merkezli</option>
+                    <option value="corners">Kenar Ağırlıklı</option>
+                </select>
+            </div>
+            <div class="setting-item">
+                <label>Mayın ve Hazineler:</label>
+                <input type="checkbox" id="surprises-toggle"> (Gizli sürprizler eklensin)
+            </div>
+            <div class="setting-item">
+                <label>Süre Sınırı (Saniye):</label>
+                <input type="number" id="timer-input" min="10" max="600" value="60" style="width: 60px;"> 
+                <small>(Kapatmak için 0 yapın)</small>
+            </div>
+        </div>
+
         <div id="offline-menu" style="display: none;">
             <p>Oyuncu Sayısını Seçin:</p>
             <div class="button-group" id="player-buttons">
@@ -44,8 +65,7 @@
                     <p id="room-link-text" style="font-size: 14px; color: #34495e; padding: 5px; margin-bottom: 10px;"></p>
                     
                     <h3 style="color: #2c3e50; margin: 10px 0;">Lobi (<span id="lobby-count">1</span> Kişi)</h3>
-                    <ul id="lobby-players-list">
-                        </ul>
+                    <ul id="lobby-players-list"></ul>
                     
                     <p style="font-size: 12px; color: #7f8c8d; margin-top: 15px;">Tüm arkadaşlarınız listeye katıldığında oyunu başlatabilirsiniz.</p>
                     <button id="btn-start-online" onclick="startOnlineGame()" style="background-color: #e74c3c;">Oyunu Başlat</button>
@@ -58,11 +78,19 @@
     <div id="game-screen" class="screen" style="display: none;">
         
         <div class="top-bar">
+            <div id="timer-display" style="display:none; font-size:18px; color:#e74c3c; font-weight:bold; margin-bottom:5px;">
+                ⏳ <span id="timer-val">60</span>s
+            </div>
             <div id="score-board"></div>
             <div id="status-panel">
                 <div id="bag-info">Torbada Kalan: <span id="bag-count">100</span> Harf</div>
                 <div id="game-status-msg"></div>
             </div>
+        </div>
+
+        <div id="quest-panel">
+            <b>🎯 GÖREV:</b> <span id="quest-text">Bekleniyor...</span> <br>
+            <small id="quest-status">Kalan Tur: 3</small>
         </div>
         
         <div id="board-container">
@@ -78,6 +106,15 @@
                 <button class="action-btn pass-btn" onclick="passTurn()">Pas Geç</button>
                 <button id="swap-btn" class="action-btn swap-btn" onclick="swapLetters()">Harf Değiştir</button>
                 <button class="action-btn confirm-btn" onclick="checkWord()">Onayla</button>
+            </div>
+
+            <div id="emoji-bar">
+                <button onclick="sendEmoji('👏')">👏</button>
+                <button onclick="sendEmoji('😂')">😂</button>
+                <button onclick="sendEmoji('😱')">😱</button>
+                <button onclick="sendEmoji('😡')">😡</button>
+                <button onclick="sendEmoji('🧠')">🧠</button>
+                <button onclick="sendEmoji('👎')">👎</button>
             </div>
         </div>
 
