@@ -18,28 +18,30 @@ let isOnlineMode = false;
 let myOnlineRoomId = null;
 let roomRef = null;
 let myPlayerIndex = -1; 
+let myPlayerId = null; 
 
 // ================= OYUN AYARLARI & HARİTALAR =================
 let gameSettings = {
     mapType: 'classic',
     surprisesEnabled: false,
-    timerValue: 60 // 0 ise kapalı
+    sabotageEnabled: false,
+    timerValue: 60 
 };
 
 const MAPS = {
-    classic: { // Mevcut hali
+    classic: { 
         tw: [0, 7, 14, 105, 119, 210, 217, 224],
         dw: [16, 28, 32, 42, 48, 56, 64, 70, 154, 160, 168, 176, 182, 192, 196, 208],
         tl: [20, 24, 76, 80, 84, 88, 136, 140, 144, 148, 200, 204],
         dl: [3, 11, 36, 38, 45, 52, 59, 92, 96, 98, 102, 108, 116, 122, 126, 128, 132, 165, 172, 179, 186, 188, 213, 221]
     },
-    cross: { // Çapraz ağırlıklı
+    cross: { 
         tw: [0, 14, 210, 224, 112],
         dw: [16, 28, 196, 208, 48, 56, 168, 176],
         tl: [32, 42, 182, 192],
         dl: [64, 70, 154, 160, 110, 114]
     },
-    corners: { // Kenar ve köşeler bonuslu
+    corners: { 
         tw: [0, 14, 210, 224, 7, 105, 119, 217],
         dw: [1, 13, 15, 29, 195, 209, 211, 223],
         tl: [2, 12, 30, 44, 180, 194, 212, 222],
@@ -48,6 +50,8 @@ const MAPS = {
 };
 
 let hiddenSurprises = {}; 
+let frozenCells = {}; 
+let sabotageMode = null; 
 
 // ================= DİNAMİK GÖREVLER SİSTEMİ =================
 const QUEST_LIST = [
@@ -84,7 +88,7 @@ const QUEST_LIST = [
 ];
 
 let currentQuest = null;
-let currentQuestIndex = -1; // YENİ: Firebase'e göndermek için index tutacağız
+let currentQuestIndex = -1; 
 let questState = 'active'; 
 let questTurnCounter = 0; 
 
@@ -147,7 +151,7 @@ function startTurnTimer() {
         if (currentTimerValue <= 0) {
             clearInterval(turnTimerInterval);
             alert("Süreniz doldu! Sıra otomatik geçiyor.");
-            passTurn();
+            passTurn(true);
         }
     }, 1000);
 }
@@ -181,6 +185,10 @@ function showOnlineMenu() {
 function getSettingsFromUI() {
     gameSettings.mapType = document.getElementById('map-select').value;
     gameSettings.surprisesEnabled = document.getElementById('surprises-toggle').checked;
+    
+    let sabToggle = document.getElementById('sabotage-toggle');
+    gameSettings.sabotageEnabled = sabToggle ? sabToggle.checked : false;
+
     let tVal = parseInt(document.getElementById('timer-input').value);
     gameSettings.timerValue = isNaN(tVal) ? 0 : tVal;
 }
@@ -202,22 +210,25 @@ function createOnlineRoom() {
     isOnlineMode = true;
     myPlayerIndex = 0; 
     playerCount = 1;
+    myPlayerId = Math.random().toString(36).substr(2, 9); 
 
-    initializeBag(); 
-    players = [{ name: playerName, score: 0, rack: [] }];
-    refillRack(players[0]); 
+    players = [{ 
+        id: myPlayerId,
+        name: playerName, score: 0, rack: [],
+        comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0
+    }];
 
     if (gameSettings.surprisesEnabled) generateSurprises();
     generateNewQuest(); 
 
-    // GÜNCELLEME: Firebase'e currentQuest (fonksiyon içerir) yerine questIndex gönderiyoruz
     roomRef.set({
         status: 'waiting',
         settings: gameSettings,
         hiddenSurprises: hiddenSurprises,
+        frozenCells: frozenCells,
         quest: { questIndex: currentQuestIndex, questState: questState, questTurnCounter: questTurnCounter },
         players: players,
-        tileBag: tileBag,
+        tileBag: [], 
         currentPlayerIndex: 0,
         board: [],
         firstMove: true 
@@ -256,18 +267,19 @@ function joinOnlineRoom() {
 
         isOnlineMode = true;
         players = data.players || [];
+        myPlayerId = Math.random().toString(36).substr(2, 9); 
         myPlayerIndex = players.length; 
         playerCount = players.length + 1;
 
-        tileBag = data.tileBag || []; 
-        
-        let newPlayer = { name: playerName, score: 0, rack: [] };
+        let newPlayer = { 
+            id: myPlayerId,
+            name: playerName, score: 0, rack: [],
+            comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0 
+        };
         players.push(newPlayer);
-        refillRack(players[myPlayerIndex]); 
 
         roomRef.update({
-            players: players,
-            tileBag: tileBag 
+            players: players
         });
 
         document.getElementById('online-waiting-area').style.display = 'block';
@@ -284,14 +296,21 @@ function joinOnlineRoom() {
     });
 }
 
+// 3. KURUCU OYUNU BAŞLATIYOR 
 function startOnlineGame() {
     if (players.length < 2) { alert("Başlamak için en az 2 kişi olmalı!"); return; }
     
     questTurnCounter = 3 * players.length;
+    players.sort(() => Math.random() - 0.5); 
     
-    // GÜNCELLEME: Firebase'e indexi yolla
+    initializeBag();
+    players.forEach(p => refillRack(p));
+    
     roomRef.update({ 
         status: 'playing',
+        players: players,
+        tileBag: tileBag, 
+        currentPlayerIndex: 0,
         quest: { questIndex: currentQuestIndex, questState: questState, questTurnCounter: questTurnCounter }
     });
 }
@@ -304,8 +323,8 @@ function listenToRoom() {
 
         if (data.settings) gameSettings = data.settings;
         if (data.hiddenSurprises) hiddenSurprises = data.hiddenSurprises;
+        if (data.frozenCells) frozenCells = data.frozenCells; else frozenCells = {};
         
-        // GÜNCELLEME: Firebase'den indexi alıp kendi listemizden görevi buluyoruz
         if (data.quest) {
             currentQuestIndex = data.quest.questIndex;
             currentQuest = currentQuestIndex !== undefined && currentQuestIndex !== -1 ? QUEST_LIST[currentQuestIndex] : null;
@@ -315,7 +334,11 @@ function listenToRoom() {
         }
 
         players = data.players || [];
-        tileBag = data.tileBag || [];
+        tileBag = data.tileBag || []; 
+        
+        if (myPlayerId) {
+            myPlayerIndex = players.findIndex(p => p.id === myPlayerId);
+        }
         
         if (currentPlayerIndex !== data.currentPlayerIndex && data.status === 'playing') {
             currentPlayerIndex = data.currentPlayerIndex || 0;
@@ -339,20 +362,19 @@ function listenToRoom() {
             document.getElementById('chat-container').style.display = 'flex'; 
             if(document.getElementById('board').innerHTML === '') createBoard();
             startTurnTimer(); 
+            
+            alert(`Oyun Başlıyor!\nİlk hamleyi yapacak kişi rastgele seçildi:\n>>> ${players[currentPlayerIndex].name} <<<`);
         }
 
         if (data.status === 'playing') {
-            document.querySelectorAll('.tile.fixed').forEach(t => t.remove());
-            if (currentPlayerIndex !== myPlayerIndex) {
-                 document.querySelectorAll('.tile:not(.fixed)').forEach(t => t.remove());
-            }
+            document.querySelectorAll('#board .tile').forEach(t => t.remove());
             
             let boardState = data.board || [];
             let tempBoardState = data.tempBoard || []; 
             
             boardState.forEach(item => {
                 let cell = document.getElementById(`cell-${item.index}`);
-                if (cell && !cell.querySelector('.tile.fixed')) {
+                if (cell) {
                     let div = document.createElement('div');
                     div.className = 'tile fixed';
                     div.innerHTML = `<span class="letter">${item.letter}</span><span class="point">${item.points}</span>`;
@@ -360,10 +382,12 @@ function listenToRoom() {
                 }
             });
             
-            if (currentPlayerIndex !== myPlayerIndex) {
+            if (currentPlayerIndex === myPlayerIndex) {
+                renderTempTiles(); 
+            } else {
                 tempBoardState.forEach(item => {
                     let cell = document.getElementById(`cell-${item.index}`);
-                    if (cell && !cell.querySelector('.tile')) {
+                    if (cell) {
                         let div = document.createElement('div');
                         div.className = 'tile'; 
                         div.innerHTML = `<span class="letter">${item.letter}</span><span class="point">${item.points}</span>`;
@@ -407,7 +431,6 @@ function triggerEmojiAnimation(emojiChar) {
     fxLayer.appendChild(el);
     setTimeout(() => el.remove(), 3000);
 }
-
 
 // ================= CHAT SİSTEMİ =================
 function listenToChat() {
@@ -458,7 +481,6 @@ function pushGameStateToFirebase() {
 
     let tempBoardState = tempTiles.map(t => { return { index: t.cellIndex, letter: t.letter, points: t.points }; });
 
-    // GÜNCELLEME: Firebase'e questIndex yolluyoruz
     roomRef.update({
         board: boardState,
         tempBoard: tempBoardState, 
@@ -467,10 +489,10 @@ function pushGameStateToFirebase() {
         currentPlayerIndex: currentPlayerIndex,
         firstMove: firstMove,
         hiddenSurprises: hiddenSurprises,
+        frozenCells: frozenCells,
         quest: { questIndex: currentQuestIndex, questState: questState, questTurnCounter: questTurnCounter }
     });
 }
-
 
 // ================= DICTIONARY =================
 let DICT = null;
@@ -546,10 +568,14 @@ function startGameWithNames() {
     for (let i = 1; i <= playerCount; i++) {
         let nameVal = document.getElementById(`player-name-${i}`).value;
         if(nameVal.trim() === "") nameVal = `Oyuncu ${i}`;
-        players.push({ name: nameVal, score: 0, rack: [] });
+        players.push({ 
+            name: nameVal, score: 0, rack: [],
+            comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0 
+        });
     }
 
-    currentPlayerIndex = Math.floor(Math.random() * playerCount);
+    players.sort(() => Math.random() - 0.5);
+    currentPlayerIndex = 0;
     
     document.getElementById('menu-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'flex';
@@ -564,19 +590,35 @@ function startGameWithNames() {
     updateUI();
     startTurnTimer();
     
-    alert(`Oyun Başlıyor! İlk sıradaki oyuncu rastgele seçildi:\n>>> ${players[currentPlayerIndex].name} <<<`);
+    alert(`Oyun Başlıyor!\nİlk sıradaki oyuncu rastgele seçildi:\n>>> ${players[currentPlayerIndex].name} <<<`);
 }
 
 function generateSurprises() {
     hiddenSurprises = {};
     let available = [];
-    for(let i=0; i<225; i++) if(i !== 112) available.push(i);
+    let activeMap = MAPS[gameSettings.mapType] || MAPS.classic;
+
+    let specialCells = new Set([112]); 
+    if (activeMap.tw) activeMap.tw.forEach(c => specialCells.add(c));
+    if (activeMap.dw) activeMap.dw.forEach(c => specialCells.add(c));
+    if (activeMap.tl) activeMap.tl.forEach(c => specialCells.add(c));
+    if (activeMap.dl) activeMap.dl.forEach(c => specialCells.add(c));
+
+    for(let i=0; i<225; i++) {
+        if(!specialCells.has(i)) available.push(i);
+    }
     available.sort(() => Math.random() - 0.5);
     
-    for(let i=0; i<3; i++) hiddenSurprises[available[i]] = 'treasure';
-    for(let i=3; i<6; i++) hiddenSurprises[available[i]] = 'mine';
+    const surpriseTypes = ['minus_rand', 'half_lose', 'double_gain', 'plus_rand'];
+    for(let i=0; i<3; i++) {
+        if (available[i] !== undefined) {
+            let randType = surpriseTypes[Math.floor(Math.random() * surpriseTypes.length)];
+            hiddenSurprises[available[i]] = randType;
+        }
+    }
 }
 
+// ================= GÜVENLİ HARF DAĞITIMI (Firebase Hatası İçin) =================
 function initializeBag() {
     tileBag = [];
     letterDistribution.forEach(item => { for (let j = 0; j < item.count; j++) tileBag.push({ ...item }); });
@@ -584,6 +626,7 @@ function initializeBag() {
 }
 
 function refillRack(player) {
+    if (!player.rack) player.rack = []; // Firebase boş listeleri sildiği için güvenlik kalkanı
     while (player.rack.length < 7 && tileBag.length > 0) {
         player.rack.push(tileBag.pop());
     }
@@ -608,16 +651,84 @@ function createBoard() {
         
         cell.ondragover = (e) => e.preventDefault();
         cell.ondrop = (e) => handleDrop(e, i);
+        cell.onclick = () => handleCellClick(i); 
         boardElement.appendChild(cell);
     }
+    renderSpecialCells();
+}
+
+function renderSpecialCells() {
+    for (let i = 0; i < 225; i++) {
+        let cell = document.getElementById(`cell-${i}`);
+        if (!cell) continue;
+
+        if (frozenCells[i] > 0) {
+            cell.classList.add('frozen');
+        } else {
+            cell.classList.remove('frozen');
+        }
+
+        if (gameSettings.surprisesEnabled && hiddenSurprises[i]) {
+            cell.classList.add('surprise-mark');
+        } else {
+            cell.classList.remove('surprise-mark');
+        }
+    }
+}
+
+function prepareSabotage(type) {
+    if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) {
+        alert("Şu an sıra sizde değil!"); return;
+    }
+    let p = players[currentPlayerIndex];
+    if (p.score < 15) {
+        alert("Bu yetenek için en az 15 puanınız olmalı!");
+        return;
+    }
+    sabotageMode = type;
+    if (type === 'freeze') alert("Buz Atmak için boş bir hücreye tıklayın! (İptal etmek için pas geçin)");
+}
+
+function handleCellClick(cellIndex) {
+    if (!sabotageMode) return;
+
+    if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) {
+        sabotageMode = null; return;
+    }
+
+    let p = players[currentPlayerIndex];
+    if (p.score < 15) {
+        alert("Bu yetenek için 15 puanın olmalı!");
+        sabotageMode = null; return;
+    }
+
+    const cell = document.getElementById(`cell-${cellIndex}`);
+
+    if (sabotageMode === 'freeze') {
+        if (cell.querySelector('.tile')) {
+            alert("Buz atmak için BOŞ bir hücre seçmelisin!");
+            sabotageMode = null; return;
+        }
+        frozenCells[cellIndex] = playerCount * 3; 
+        p.score = Math.max(0, p.score - 15);
+        alert("Hücre 3 tur boyunca donduruldu!");
+    } 
+    
+    sabotageMode = null;
+    updateUI();
+    renderSpecialCells();
+    if (isOnlineMode) pushGameStateToFirebase();
 }
 
 function handleDrop(event, cellIndex) {
     event.preventDefault();
 
     if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) {
-        alert("Şu an sıra sizde değil, bekleyin!");
-        return;
+        alert("Şu an sıra sizde değil, bekleyin!"); return;
+    }
+
+    if (frozenCells[cellIndex] && frozenCells[cellIndex] > 0) {
+        alert("Bu hücre dondurulmuş! Buraya harf koyamazsınız."); return;
     }
 
     const cell = document.getElementById(`cell-${cellIndex}`);
@@ -649,6 +760,7 @@ function renderTempTiles() {
 function undoTile(index) {
     const tile = tempTiles[index];
     let activePlayer = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
+    if (!activePlayer.rack) activePlayer.rack = [];
     activePlayer.rack.push({ letter: tile.letter, points: tile.points });
     tempTiles.splice(index, 1);
     renderTempTiles();
@@ -706,19 +818,44 @@ function updateUI() {
     const swapBtn = document.getElementById('swap-btn');
     if (tileBag.length === 0) { swapBtn.disabled = true; swapBtn.style.opacity = "0.5"; }
 
+    const sabotagePanel = document.getElementById('sabotage-panel');
+    if (sabotagePanel) {
+        if (gameSettings.sabotageEnabled && (isOnlineMode ? currentPlayerIndex === myPlayerIndex : true)) {
+            sabotagePanel.style.display = 'flex';
+        } else {
+            sabotagePanel.style.display = 'none';
+        }
+    }
+
     const rackElement = document.getElementById('player-rack');
     rackElement.innerHTML = '';
     
     let rackOwnerIndex = isOnlineMode ? myPlayerIndex : currentPlayerIndex;
-    if (players[rackOwnerIndex] && players[rackOwnerIndex].rack) {
-        players[rackOwnerIndex].rack.forEach((tile, idx) => { rackElement.appendChild(createTileElement(tile, idx)); });
+    if (players[rackOwnerIndex]) {
+        if ((players[rackOwnerIndex].comboStreak || 0) >= 3) {
+            rackElement.classList.add('on-fire');
+        } else {
+            rackElement.classList.remove('on-fire');
+        }
+
+        if (players[rackOwnerIndex].rack) {
+            players[rackOwnerIndex].rack.forEach((tile, idx) => { rackElement.appendChild(createTileElement(tile, idx)); });
+        }
     }
     
+    renderSpecialCells();
     updateQuestUI(); 
 }
 
-function passTurn() {
+function passTurn(isManualPass = false) {
     if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Şu an sıra sizde değil!"); return; }
+    
+    sabotageMode = null; 
+    
+    let p = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
+    if (isManualPass) { p.passCount = (p.passCount || 0) + 1; }
+    p.comboStreak = 0; 
+    
     while (tempTiles.length > 0) undoTile(0);
 
     if (tileBag.length === 0) {
@@ -730,15 +867,17 @@ function passTurn() {
 
     questTurnCounter--;
     if (questTurnCounter <= 0) {
-        if (questState === 'active') {
-            generateNewQuest();
-        } else {
-            generateNewQuest();
-        }
+        if (questState === 'active') { generateNewQuest(); } else { generateNewQuest(); }
     }
 
+    for (let key in frozenCells) {
+        frozenCells[key]--;
+        if (frozenCells[key] <= 0) delete frozenCells[key];
+    }
+
+    refillRack(p);
+
     currentPlayerIndex = (currentPlayerIndex + 1) % playerCount;
-    refillRack(players[currentPlayerIndex]);
     
     if (!isOnlineMode) startTurnTimer(); 
     updateUI();
@@ -753,21 +892,36 @@ function swapLetters() {
     const p = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
     while (tempTiles.length > 0) undoTile(0);
 
+    if (!p.rack) p.rack = [];
     const countToSwap = Math.min(p.rack.length, tileBag.length);
     const oldLetters = p.rack.splice(0, countToSwap);
     for (let i = 0; i < countToSwap; i++) { p.rack.push(tileBag.pop()); }
     tileBag.push(...oldLetters);
     tileBag.sort(() => Math.random() - 0.5); 
 
+    p.passCount = (p.passCount || 0) + 1;
+    p.comboStreak = 0;
+
     alert(`${countToSwap} harf değiştirildi. Sıra geçiyor...`);
     passTurn(); 
 }
 
 function endGame() {
-    let winner = players.reduce((prev, current) => (prev.score > current.score) ? prev : current);
     window.onbeforeunload = null;
-    alert(`OYUN BİTTİ!\n\nKazanan: ${winner.name}\nSkor: ${winner.score}`);
-    location.reload(); 
+
+    let winner = players.reduce((prev, current) => (prev.score > current.score) ? prev : current);
+    let cambaz = players.reduce((prev, current) => ((prev.longestWord||"").length > (current.longestWord||"").length) ? prev : current);
+    let gorevci = players.reduce((prev, current) => ((prev.questsCompleted||0) > (current.questsCompleted||0)) ? prev : current);
+    let esek = players.reduce((prev, current) => ((prev.minesHit||0) > (current.minesHit||0)) ? prev : current);
+    let bariscil = players.reduce((prev, current) => ((prev.passCount||0) > (current.passCount||0)) ? prev : current);
+
+    document.getElementById('oscar-winner').innerText = `Kazanan: ${winner.name} (${winner.score} Puan)`;
+    document.getElementById('oscar-longest').innerText = `${cambaz.name} - ${cambaz.longestWord || "Yok"} (${(cambaz.longestWord||"").length} Harf)`;
+    document.getElementById('oscar-quests').innerText = `${gorevci.name} - ${gorevci.questsCompleted || 0} Görev`;
+    document.getElementById('oscar-mines').innerText = `${esek.name} - ${esek.minesHit || 0} Kez Sürprize Denk Geldi`;
+    document.getElementById('oscar-passes').innerText = `${bariscil.name} - ${bariscil.passCount || 0} Kez Pas/Değişim`;
+
+    document.getElementById('oscar-modal').style.display = 'flex';
 }
 
 function triggerSuccessEffect(targetCells, scoreGained, isMine = false) {
@@ -837,13 +991,20 @@ function checkWord() {
         });
     });
 
+    let hasFixedTiles = document.querySelectorAll('.tile.fixed').length > 0;
+    if (!firstMove && !hasFixedTiles) {
+        if (!usedCenter) { alert("Tahta boş, kelime yıldızdan geçmeli!"); return; }
+    } else if (!firstMove && !isConnected) {
+        alert("Mevcut bir harfe dokunmalısınız!"); return;
+    }
+
     if (firstMove && !usedCenter) { alert("İlk kelime yıldızdan geçmeli!"); return; }
-    if (!firstMove && !isConnected) { alert("Mevcut bir harfe dokunmalısınız!"); return; }
 
     let totalTurnScore = 0;
     let anyValidWord = false;
     let validatedCells = []; 
     let formedWords = []; 
+    let validNewTileIndices = new Set(); 
 
     let activeMap = MAPS[gameSettings.mapType] || MAPS.classic;
 
@@ -851,6 +1012,7 @@ function checkWord() {
         for (let i = 0; i < 15; i++) {
             let word = ""; let pSum = 0; let wMult = 1; let hasNew = false;
             let currentWordCells = []; 
+            let currentNewIndices = []; 
             for (let j = 0; j < 15; j++) {
                 let idx = isHorizontal ? (i * 15 + j) : (j * 15 + i);
                 let tileEl = document.getElementById(`cell-${idx}`).querySelector('.tile');
@@ -860,6 +1022,7 @@ function checkWord() {
                     let isNew = !tileEl.classList.contains('fixed');
                     if (isNew) {
                         hasNew = true;
+                        currentNewIndices.push(idx);
                         if (idx === 112) wMult *= 2; 
                         if (activeMap.tl && activeMap.tl.includes(idx)) p *= 3;
                         else if (activeMap.dl && activeMap.dl.includes(idx)) p *= 2;
@@ -869,18 +1032,26 @@ function checkWord() {
                     word += letter; pSum += p;
                     currentWordCells.push(document.getElementById(`cell-${idx}`));
                 } else {
-                    if (word.length > 1 && hasNew && DICT.has(word)) {
-                        totalTurnScore += (pSum * wMult); anyValidWord = true;
-                        validatedCells.push(...currentWordCells);
-                        formedWords.push(word);
+                    if (word.length > 1 && hasNew) {
+                        if (DICT.has(word)) {
+                            totalTurnScore += (pSum * wMult); 
+                            anyValidWord = true;
+                            validatedCells.push(...currentWordCells);
+                            formedWords.push(word);
+                            currentNewIndices.forEach(id => validNewTileIndices.add(id));
+                        }
                     }
-                    word = ""; pSum = 0; wMult = 1; hasNew = false; currentWordCells = [];
+                    word = ""; pSum = 0; wMult = 1; hasNew = false; currentWordCells = []; currentNewIndices = [];
                 }
             }
-            if (word.length > 1 && hasNew && DICT.has(word)) {
-                totalTurnScore += (pSum * wMult); anyValidWord = true;
-                validatedCells.push(...currentWordCells);
-                formedWords.push(word);
+            if (word.length > 1 && hasNew) {
+                if (DICT.has(word)) {
+                    totalTurnScore += (pSum * wMult); 
+                    anyValidWord = true;
+                    validatedCells.push(...currentWordCells);
+                    formedWords.push(word);
+                    currentNewIndices.forEach(id => validNewTileIndices.add(id));
+                }
             }
         }
     };
@@ -889,19 +1060,52 @@ function checkWord() {
     scanAll(false);
 
     if (anyValidWord) {
+        let p = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
+        let tilesToKeep = [];
+        let returnedLetters = [];
         
+        if (!p.rack) p.rack = []; 
+
+        tempTiles.forEach(t => {
+            if (validNewTileIndices.has(t.cellIndex)) {
+                tilesToKeep.push(t);
+            } else {
+                p.rack.push({ letter: t.letter, points: t.points }); 
+                let cell = document.getElementById(`cell-${t.cellIndex}`);
+                let tileEl = cell.querySelector('.tile:not(.fixed)');
+                if (tileEl) tileEl.remove(); 
+                returnedLetters.push(t.letter);
+            }
+        });
+
+        tempTiles = tilesToKeep;
+
+        if (returnedLetters.length > 0) {
+            if (isOnlineMode) pushGameStateToFirebase();
+            alert(`Oluşturduğunuz geçerli kelimeler kabul edildi. Anlamlı bir kelimeye bağlanmayan harfleriniz (${returnedLetters.join(', ')}) ıstakanıza geri döndü.`);
+        }
+
         let isMined = false;
+
+        p.comboStreak = (p.comboStreak || 0) + 1;
+        if (p.comboStreak >= 3) {
+            totalTurnScore += 1; 
+        }
+
+        for (let w of formedWords) {
+            if (w.length > (p.longestWord || "").length) {
+                p.longestWord = w;
+            }
+        }
 
         if (questState === 'active' && currentQuest) {
             let questCompleted = false;
             for (let w of formedWords) {
-                if (currentQuest.check(w)) {
-                    questCompleted = true;
-                    break;
-                }
+                if (currentQuest.check(w)) { questCompleted = true; break; }
             }
             if (questCompleted) {
                 totalTurnScore += currentQuest.points;
+                p.questsCompleted = (p.questsCompleted || 0) + 1; 
                 questState = 'cooldown';
                 let pCount = Math.max(1, playerCount);
                 questTurnCounter = 3 * pCount; 
@@ -913,15 +1117,29 @@ function checkWord() {
         if (gameSettings.surprisesEnabled) {
             validatedCells.forEach(cell => {
                 let idx = parseInt(cell.id.split('-')[1]);
-                if (hiddenSurprises[idx]) {
-                    if (hiddenSurprises[idx] === 'treasure') {
-                        totalTurnScore += 20;
-                        alert("🎁 GİZLİ HAZİNE BULDUN! +20 Puan!");
-                    } else if (hiddenSurprises[idx] === 'mine') {
+                if (hiddenSurprises[idx] && validNewTileIndices.has(idx)) { 
+                    let type = hiddenSurprises[idx];
+                    
+                    if (type === 'double_gain') {
+                        totalTurnScore *= 2;
+                        alert("🎁 GİZLİ HAZİNE! Kazandığın puan 2'ye katlandı!");
+                    } else if (type === 'half_lose') {
                         totalTurnScore = Math.floor(totalTurnScore / 2);
                         isMined = true;
-                        alert("💥 MAYINA BASTIN! Bu elde kazandığın puan yarıya düştü!");
+                        p.minesHit = (p.minesHit || 0) + 1;
+                        alert("💥 MAYIN! Bu elde kazandığın puan yarıya düştü!");
+                    } else if (type === 'plus_rand') {
+                        let rand = Math.floor(Math.random() * 10) + 1;
+                        totalTurnScore += rand;
+                        alert(`🎁 GİZLİ HAZİNE! Ekstra +${rand} Puan kazandın!`);
+                    } else if (type === 'minus_rand') {
+                        let rand = Math.floor(Math.random() * 10) + 1;
+                        totalTurnScore -= rand;
+                        isMined = true;
+                        p.minesHit = (p.minesHit || 0) + 1;
+                        alert(`💥 MAYIN! Toplam puanından ${rand} Puan silindi!`);
                     }
+                    
                     delete hiddenSurprises[idx]; 
                 }
             });
@@ -932,11 +1150,11 @@ function checkWord() {
         setTimeout(() => {
             document.querySelectorAll('.tile:not(.fixed)').forEach(t => t.classList.add('fixed'));
             tempTiles = [];
-            players[currentPlayerIndex].score += totalTurnScore;
+            p.score += totalTurnScore;
             firstMove = false;
             
-            if (players[currentPlayerIndex].rack.length === 0 && tileBag.length === 0) {
-                alert(`${players[currentPlayerIndex].name} tüm harflerini bitirdi! Oyun sonlanıyor.`);
+            if (p.rack.length === 0 && tileBag.length === 0) {
+                alert(`${p.name} tüm harflerini bitirdi! Oyun sonlanıyor.`);
                 endGame();
                 return;
             }
@@ -946,5 +1164,6 @@ function checkWord() {
         
     } else {
         alert("Geçerli bir kelime oluşturamadınız!");
+        while (tempTiles.length > 0) undoTile(0);
     }
 }

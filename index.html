@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Türkçe Kelime Oyunu</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=3.0">
     
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
@@ -31,7 +31,11 @@
             </div>
             <div class="setting-item">
                 <label>Mayın ve Hazineler:</label>
-                <input type="checkbox" id="surprises-toggle"> (Gizli sürprizler eklensin)
+                <input type="checkbox" id="surprises-toggle"> (Gizli sürprizler ❓ eklensin)
+            </div>
+            <div class="setting-item">
+                <label>Buz Atma Yeteneği:</label>
+                <input type="checkbox" id="sabotage-toggle"> (Hücre dondurma)
             </div>
             <div class="setting-item">
                 <label>Süre Sınırı (Saniye):</label>
@@ -101,9 +105,13 @@
             <h3 id="turn-info">Sıra: Oyuncu 1</h3>
             
             <div id="player-rack" class="rack-container"></div>
+
+            <div id="sabotage-panel" style="display: none; justify-content: center; gap: 6px; margin-bottom: 8px;">
+                <button class="action-btn" style="background-color: #3498db;" onclick="prepareSabotage('freeze')">❄️ Buz At (-15p)</button>
+            </div>
             
             <div class="action-buttons">
-                <button class="action-btn pass-btn" onclick="passTurn()">Pas Geç</button>
+                <button class="action-btn pass-btn" onclick="passTurn(true)">Pas Geç</button>
                 <button id="swap-btn" class="action-btn swap-btn" onclick="swapLetters()">Harf Değiştir</button>
                 <button class="action-btn confirm-btn" onclick="checkWord()">Onayla</button>
             </div>
@@ -129,8 +137,23 @@
 
     </div>
 
+    <div id="oscar-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 100000; justify-content: center; align-items: center;">
+        <div class="lobby-card" style="max-width: 400px; text-align: center; overflow-y: auto; max-height: 90vh;">
+            <h2 style="color: #e67e22;">🏆 OYUN BİTTİ! 🏆</h2>
+            <h3 id="oscar-winner" style="color: #2ecc71;">Kazanan: ...</h3>
+            <hr>
+            <div style="text-align: left; padding: 10px;">
+                <p><b>🧠 Kelime Cambazı (En Uzun Kelime):</b> <br><span id="oscar-longest">...</span></p>
+                <p><b>🎯 Görev Avcısı (En Çok Görev):</b> <br><span id="oscar-quests">...</span></p>
+                <p><b>💥 Mayın Eşeği (En Çok Sürpriz):</b> <br><span id="oscar-mines">...</span></p>
+                <p><b>🕊️ Barışçıl (En Çok Pas/Değişim):</b> <br><span id="oscar-passes">...</span></p>
+            </div>
+            <button onclick="location.reload()" style="background-color: #3498db; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%; margin-top: 10px;">Ana Menüye Dön</button>
+        </div>
+    </div>
+
     <div id="fx-layer" style="position:fixed; top:0; left:0; pointer-events:none; z-index:9999; width:100%; height:100%;"></div>
 
-    <script src="script.js"></script>
+    <script src="script.js?v=3.1"></script>
 </body>
 </html>
