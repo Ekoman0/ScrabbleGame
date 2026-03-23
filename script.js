@@ -84,14 +84,14 @@ const QUEST_LIST = [
 ];
 
 let currentQuest = null;
+let currentQuestIndex = -1; // YENİ: Firebase'e göndermek için index tutacağız
 let questState = 'active'; 
-let questTurnCounter = 0; // GÜNCELLEME: Artık Raund başına hesaplanacak
+let questTurnCounter = 0; 
 
 function generateNewQuest() {
-    let randIdx = Math.floor(Math.random() * QUEST_LIST.length);
-    currentQuest = QUEST_LIST[randIdx];
+    currentQuestIndex = Math.floor(Math.random() * QUEST_LIST.length);
+    currentQuest = QUEST_LIST[currentQuestIndex];
     questState = 'active';
-    // GÜNCELLEME: Tur sayısını oyuncu sayısıyla çarpıyoruz (3 Raund)
     let pCount = Math.max(1, playerCount);
     questTurnCounter = 3 * pCount; 
     updateQuestUI();
@@ -102,7 +102,6 @@ function updateQuestUI() {
     const qs = document.getElementById('quest-status');
     if (!currentQuest) return;
 
-    // GÜNCELLEME: Ekranda gösterirken oyuncu sayısına bölüp yuvarlıyoruz (Gerçek Raund)
     let pCount = Math.max(1, playerCount);
     let roundsLeft = Math.ceil(questTurnCounter / pCount);
 
@@ -152,7 +151,6 @@ function startTurnTimer() {
         }
     }, 1000);
 }
-
 
 // ================= MENÜ YÖNETİMİ =================
 function showOfflineMenu() {
@@ -212,11 +210,12 @@ function createOnlineRoom() {
     if (gameSettings.surprisesEnabled) generateSurprises();
     generateNewQuest(); 
 
+    // GÜNCELLEME: Firebase'e currentQuest (fonksiyon içerir) yerine questIndex gönderiyoruz
     roomRef.set({
         status: 'waiting',
         settings: gameSettings,
         hiddenSurprises: hiddenSurprises,
-        quest: { currentQuest: currentQuest, questState: questState, questTurnCounter: questTurnCounter },
+        quest: { questIndex: currentQuestIndex, questState: questState, questTurnCounter: questTurnCounter },
         players: players,
         tileBag: tileBag,
         currentPlayerIndex: 0,
@@ -288,12 +287,12 @@ function joinOnlineRoom() {
 function startOnlineGame() {
     if (players.length < 2) { alert("Başlamak için en az 2 kişi olmalı!"); return; }
     
-    // GÜNCELLEME: Oyun başlarken görev turunu gerçek oyuncu sayısına göre düzelt (Örn: 3 Raund * 4 Oyuncu = 12 Hamle)
     questTurnCounter = 3 * players.length;
     
+    // GÜNCELLEME: Firebase'e indexi yolla
     roomRef.update({ 
         status: 'playing',
-        quest: { currentQuest: currentQuest, questState: questState, questTurnCounter: questTurnCounter }
+        quest: { questIndex: currentQuestIndex, questState: questState, questTurnCounter: questTurnCounter }
     });
 }
 
@@ -305,8 +304,11 @@ function listenToRoom() {
 
         if (data.settings) gameSettings = data.settings;
         if (data.hiddenSurprises) hiddenSurprises = data.hiddenSurprises;
+        
+        // GÜNCELLEME: Firebase'den indexi alıp kendi listemizden görevi buluyoruz
         if (data.quest) {
-            currentQuest = data.quest.currentQuest;
+            currentQuestIndex = data.quest.questIndex;
+            currentQuest = currentQuestIndex !== undefined && currentQuestIndex !== -1 ? QUEST_LIST[currentQuestIndex] : null;
             questState = data.quest.questState;
             questTurnCounter = data.quest.questTurnCounter;
             updateQuestUI();
@@ -456,6 +458,7 @@ function pushGameStateToFirebase() {
 
     let tempBoardState = tempTiles.map(t => { return { index: t.cellIndex, letter: t.letter, points: t.points }; });
 
+    // GÜNCELLEME: Firebase'e questIndex yolluyoruz
     roomRef.update({
         board: boardState,
         tempBoard: tempBoardState, 
@@ -464,7 +467,7 @@ function pushGameStateToFirebase() {
         currentPlayerIndex: currentPlayerIndex,
         firstMove: firstMove,
         hiddenSurprises: hiddenSurprises,
-        quest: { currentQuest: currentQuest, questState: questState, questTurnCounter: questTurnCounter }
+        quest: { questIndex: currentQuestIndex, questState: questState, questTurnCounter: questTurnCounter }
     });
 }
 
@@ -725,7 +728,6 @@ function passTurn() {
         document.getElementById('game-status-msg').innerText = `Oyun bitimine son ${Math.ceil(gameOverCountdown/playerCount)} tur!`;
     }
 
-    // GÖREV TUR KONTROLÜ (Gerçek oyuncu hamle sayısından düşüyor)
     questTurnCounter--;
     if (questTurnCounter <= 0) {
         if (questState === 'active') {
@@ -890,7 +892,6 @@ function checkWord() {
         
         let isMined = false;
 
-        // Görev kontrolü
         if (questState === 'active' && currentQuest) {
             let questCompleted = false;
             for (let w of formedWords) {
@@ -902,7 +903,6 @@ function checkWord() {
             if (questCompleted) {
                 totalTurnScore += currentQuest.points;
                 questState = 'cooldown';
-                // GÜNCELLEME: Mola sayacını gerçek oyuncu sayısına göre ayarla
                 let pCount = Math.max(1, playerCount);
                 questTurnCounter = 3 * pCount; 
                 sendEmoji('🎉'); 
@@ -910,7 +910,6 @@ function checkWord() {
             }
         }
 
-        // Sürpriz Kutu Kontrolü
         if (gameSettings.surprisesEnabled) {
             validatedCells.forEach(cell => {
                 let idx = parseInt(cell.id.split('-')[1]);
