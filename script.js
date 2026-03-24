@@ -20,11 +20,75 @@ let roomRef = null;
 let myPlayerIndex = -1; 
 let myPlayerId = null; 
 
+// ================= YENİ: SES MOTORU (WEB AUDIO API) =================
+// Hiçbir dosya indirmeye gerek kalmadan elektronik olarak ses üretiyoruz!
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playSound(type) {
+    if (!gameSettings.soundsEnabled) return; // Ayarlardan kapalıysa çalma
+    
+    // Tarayıcı güvenlik gereği sesi bekletiyorsa uyandır
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    osc.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    
+    const now = audioCtx.currentTime;
+    
+    if (type === 'click') {
+        // Harf koyma / çekme (Kısa tok ses)
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.exponentialRampToValueAtTime(300, now + 0.1);
+        gainNode.gain.setValueAtTime(0.5, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+    } else if (type === 'success') {
+        // Puan Kazanma / Görev (Çing Sesi)
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.setValueAtTime(600, now + 0.1);
+        gainNode.gain.setValueAtTime(0.5, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+    } else if (type === 'error') {
+        // Yanlış kelime / Mayın (Bızz Sesi)
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, now);
+        gainNode.gain.setValueAtTime(0.5, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+    } else if (type === 'emoji') {
+        // Emoji uçurma (Pop Sesi)
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.linearRampToValueAtTime(800, now + 0.1);
+        gainNode.gain.setValueAtTime(0.3, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+    } else if (type === 'tick') {
+        // Süre biterken (Tik tak)
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(800, now);
+        gainNode.gain.setValueAtTime(0.1, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
+        osc.start(now);
+        osc.stop(now + 0.05);
+    }
+}
+
 // ================= OYUN AYARLARI & HARİTALAR =================
 let gameSettings = {
     mapType: 'classic',
     surprisesEnabled: false,
     sabotageEnabled: false,
+    soundsEnabled: true, // YENİ: Ses Ayarı
     timerValue: 60 
 };
 
@@ -148,6 +212,11 @@ function startTurnTimer() {
         currentTimerValue--;
         document.getElementById('timer-val').innerText = currentTimerValue;
 
+        // YENİ: Son 5 saniyede tik-tak sesi
+        if (currentTimerValue <= 5 && currentTimerValue > 0) {
+            playSound('tick');
+        }
+
         if (currentTimerValue <= 0) {
             clearInterval(turnTimerInterval);
             alert("Süreniz doldu! Sıra otomatik geçiyor.");
@@ -189,6 +258,9 @@ function getSettingsFromUI() {
     let sabToggle = document.getElementById('sabotage-toggle');
     gameSettings.sabotageEnabled = sabToggle ? sabToggle.checked : false;
 
+    let soundToggle = document.getElementById('sounds-toggle');
+    gameSettings.soundsEnabled = soundToggle ? soundToggle.checked : true;
+
     let tVal = parseInt(document.getElementById('timer-input').value);
     gameSettings.timerValue = isNaN(tVal) ? 0 : tVal;
 }
@@ -199,6 +271,9 @@ function createOnlineRoom() {
     if (playerName.trim() === "") { alert("Lütfen adınızı girin!"); return; }
 
     getSettingsFromUI();
+
+    // Kullanıcı ilk butona bastığında AudioContext uyandırılır (Mobil uyumluluk için şart)
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
     const createBtn = document.getElementById('btn-create-room');
     createBtn.innerText = "Oda Kuruluyor...";
@@ -253,6 +328,9 @@ function createOnlineRoom() {
 function joinOnlineRoom() {
     let playerName = document.getElementById('online-player-name').value;
     if (playerName.trim() === "") { alert("Lütfen adınızı girin!"); return; }
+
+    getSettingsFromUI(); // Kendi ses tercihini al
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
     const joinBtn = document.getElementById('btn-join-room');
     joinBtn.innerText = "Bağlanıyor...";
@@ -321,7 +399,12 @@ function listenToRoom() {
         const data = snapshot.val();
         if (!data) return;
 
-        if (data.settings) gameSettings = data.settings;
+        if (data.settings) {
+            // Ses ayarını kendi tarayıcımdan kullanmak için onu es geçiyoruz
+            let mySound = gameSettings.soundsEnabled;
+            gameSettings = data.settings;
+            gameSettings.soundsEnabled = mySound;
+        }
         if (data.hiddenSurprises) hiddenSurprises = data.hiddenSurprises;
         if (data.frozenCells) frozenCells = data.frozenCells; else frozenCells = {};
         
@@ -423,6 +506,7 @@ function listenToEmojis() {
 }
 
 function triggerEmojiAnimation(emojiChar) {
+    playSound('emoji'); // YENİ: Emoji Uçuşma Sesi
     const fxLayer = document.getElementById('fx-layer');
     const el = document.createElement('div');
     el.className = 'flying-emoji';
@@ -441,6 +525,7 @@ function listenToChat() {
             msgDiv.className = 'chat-msg self';
         } else {
             msgDiv.className = 'chat-msg';
+            playSound('emoji'); // Başkasından mesaj gelirse ufak bir bildirim sesi
         }
         msgDiv.innerHTML = `<span>${msg.sender}</span>${msg.text}`;
         const chatMessages = document.getElementById('chat-messages');
@@ -563,6 +648,7 @@ function startGameWithNames() {
     if (!DICT) { alert("Sözlük yükleniyor..."); return; }
     
     getSettingsFromUI();
+    if (audioCtx.state === 'suspended') audioCtx.resume(); // Ses motorunu başlat
 
     players = [];
     for (let i = 1; i <= playerCount; i++) {
@@ -618,7 +704,6 @@ function generateSurprises() {
     }
 }
 
-// ================= GÜVENLİ HARF DAĞITIMI (Firebase Hatası İçin) =================
 function initializeBag() {
     tileBag = [];
     letterDistribution.forEach(item => { for (let j = 0; j < item.count; j++) tileBag.push({ ...item }); });
@@ -626,7 +711,7 @@ function initializeBag() {
 }
 
 function refillRack(player) {
-    if (!player.rack) player.rack = []; // Firebase boş listeleri sildiği için güvenlik kalkanı
+    if (!player.rack) player.rack = []; 
     while (player.rack.length < 7 && tileBag.length > 0) {
         player.rack.push(tileBag.pop());
     }
@@ -711,6 +796,7 @@ function handleCellClick(cellIndex) {
         }
         frozenCells[cellIndex] = playerCount * 3; 
         p.score = Math.max(0, p.score - 15);
+        playSound('click');
         alert("Hücre 3 tur boyunca donduruldu!");
     } 
     
@@ -739,6 +825,7 @@ function handleDrop(event, cellIndex) {
         let activePlayer = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
         activePlayer.rack.splice(draggedTileInfo.rackIndex, 1);
         draggedTileInfo = null;
+        playSound('click'); // YENİ: Harf koyma sesi
         renderTempTiles();
         updateUI();
         if (isOnlineMode) pushGameStateToFirebase();
@@ -763,6 +850,7 @@ function undoTile(index) {
     if (!activePlayer.rack) activePlayer.rack = [];
     activePlayer.rack.push({ letter: tile.letter, points: tile.points });
     tempTiles.splice(index, 1);
+    playSound('click'); // YENİ: Harf çekme sesi
     renderTempTiles();
     updateUI();
     if (isOnlineMode) pushGameStateToFirebase();
@@ -902,6 +990,7 @@ function swapLetters() {
     p.passCount = (p.passCount || 0) + 1;
     p.comboStreak = 0;
 
+    playSound('click');
     alert(`${countToSwap} harf değiştirildi. Sıra geçiyor...`);
     passTurn(); 
 }
@@ -921,6 +1010,7 @@ function endGame() {
     document.getElementById('oscar-mines').innerText = `${esek.name} - ${esek.minesHit || 0} Kez Sürprize Denk Geldi`;
     document.getElementById('oscar-passes').innerText = `${bariscil.name} - ${bariscil.passCount || 0} Kez Pas/Değişim`;
 
+    playSound('success'); // Oyun bitiş sesi
     document.getElementById('oscar-modal').style.display = 'flex';
 }
 
@@ -981,7 +1071,7 @@ function checkWord() {
     const isH = tempTiles.every(t => Math.floor(t.cellIndex / 15) === Math.floor(firstIdx / 15));
     const isV = tempTiles.every(t => t.cellIndex % 15 === firstIdx % 15);
 
-    if (!isH && !isV) { alert("Harfler aynı sırada olmalı!"); return; }
+    if (!isH && !isV) { playSound('error'); alert("Harfler aynı sırada olmalı!"); return; }
 
     tempTiles.forEach(t => {
         if (t.cellIndex === 112) usedCenter = true;
@@ -993,12 +1083,12 @@ function checkWord() {
 
     let hasFixedTiles = document.querySelectorAll('.tile.fixed').length > 0;
     if (!firstMove && !hasFixedTiles) {
-        if (!usedCenter) { alert("Tahta boş, kelime yıldızdan geçmeli!"); return; }
+        if (!usedCenter) { playSound('error'); alert("Tahta boş, kelime yıldızdan geçmeli!"); return; }
     } else if (!firstMove && !isConnected) {
-        alert("Mevcut bir harfe dokunmalısınız!"); return;
+        playSound('error'); alert("Mevcut bir harfe dokunmalısınız!"); return;
     }
 
-    if (firstMove && !usedCenter) { alert("İlk kelime yıldızdan geçmeli!"); return; }
+    if (firstMove && !usedCenter) { playSound('error'); alert("İlk kelime yıldızdan geçmeli!"); return; }
 
     let totalTurnScore = 0;
     let anyValidWord = false;
@@ -1082,6 +1172,7 @@ function checkWord() {
 
         if (returnedLetters.length > 0) {
             if (isOnlineMode) pushGameStateToFirebase();
+            playSound('error');
             alert(`Oluşturduğunuz geçerli kelimeler kabul edildi. Anlamlı bir kelimeye bağlanmayan harfleriniz (${returnedLetters.join(', ')}) ıstakanıza geri döndü.`);
         }
 
@@ -1110,6 +1201,7 @@ function checkWord() {
                 let pCount = Math.max(1, playerCount);
                 questTurnCounter = 3 * pCount; 
                 sendEmoji('🎉'); 
+                playSound('success');
                 alert(`GÖREV TAMAMLANDI: ${currentQuest.text}!`);
             }
         }
@@ -1122,21 +1214,25 @@ function checkWord() {
                     
                     if (type === 'double_gain') {
                         totalTurnScore *= 2;
+                        playSound('success');
                         alert("🎁 GİZLİ HAZİNE! Kazandığın puan 2'ye katlandı!");
                     } else if (type === 'half_lose') {
                         totalTurnScore = Math.floor(totalTurnScore / 2);
                         isMined = true;
                         p.minesHit = (p.minesHit || 0) + 1;
+                        playSound('error');
                         alert("💥 MAYIN! Bu elde kazandığın puan yarıya düştü!");
                     } else if (type === 'plus_rand') {
                         let rand = Math.floor(Math.random() * 10) + 1;
                         totalTurnScore += rand;
+                        playSound('success');
                         alert(`🎁 GİZLİ HAZİNE! Ekstra +${rand} Puan kazandın!`);
                     } else if (type === 'minus_rand') {
                         let rand = Math.floor(Math.random() * 10) + 1;
                         totalTurnScore -= rand;
                         isMined = true;
                         p.minesHit = (p.minesHit || 0) + 1;
+                        playSound('error');
                         alert(`💥 MAYIN! Toplam puanından ${rand} Puan silindi!`);
                     }
                     
@@ -1145,6 +1241,7 @@ function checkWord() {
             });
         }
 
+        playSound('success'); // Standart puan sesi
         triggerSuccessEffect(validatedCells, isMined ? ("-" + totalTurnScore) : ("+" + totalTurnScore), isMined);
         
         setTimeout(() => {
@@ -1163,6 +1260,7 @@ function checkWord() {
         }, 1000); 
         
     } else {
+        playSound('error');
         alert("Geçerli bir kelime oluşturamadınız!");
         while (tempTiles.length > 0) undoTile(0);
     }
