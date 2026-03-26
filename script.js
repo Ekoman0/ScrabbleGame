@@ -1069,7 +1069,11 @@ function updateUI() {
     }
     
     const swapBtn = document.getElementById('swap-btn');
-    if (tileBag.length === 0) { swapBtn.disabled = true; swapBtn.style.opacity = "0.5"; }
+    if (tileBag.length === 0 || (isOnlineMode && currentPlayerIndex !== myPlayerIndex)) {
+        swapBtn.disabled = true; swapBtn.style.opacity = "0.5";
+    } else {
+        swapBtn.disabled = false; swapBtn.style.opacity = "1";
+    }
 
     const sabotagePanel = document.getElementById('sabotage-panel');
     if (sabotagePanel) {
@@ -1254,10 +1258,11 @@ function triggerSuccessEffect(targetCells, scoreGained, isMine = false) {
 // ================= WORD CHECK LOGIC =================
 
 let isChecking = false;
+let isConfirmAnimating = false;
 
 async function checkWord() {
     if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Sıra sizde değil!"); return; }
-    if (isChecking) return;
+    if (isChecking || isConfirmAnimating) return;
     if (!DICT || tempTiles.length === 0) return;
 
     let isConnected = false;
@@ -1333,6 +1338,8 @@ async function checkWord() {
     isChecking = true;
     isTimerPaused = true;
     let pauseStartTime = Date.now();
+
+    try {
     
     // Doğrulanıyor Animasyonu ve UI
     document.getElementById('turn-info').innerHTML = `<span style="color:#f39c12; font-weight:bold;">⏳ TDK Doğrulanıyor...</span>`;
@@ -1473,21 +1480,25 @@ async function checkWord() {
         // Doğrulanıyor animasyonunu temizle
         document.querySelectorAll('.checking-anim').forEach(el => el.classList.remove('checking-anim'));
 
-        playSound('success'); // Standart puan sesi
+        // FIX: Önce tile'ları hemen fixed yap ve state'i güncelle (race condition önleme)
+        document.querySelectorAll('.tile:not(.fixed)').forEach(t => t.classList.add('fixed'));
+        tempTiles = [];
+        p.score += totalTurnScore;
+        firstMove = false;
+        
+        if (isOnlineMode) {
+            players[myPlayerIndex] = p;
+        } else {
+            players[currentPlayerIndex] = p;
+        }
+
+        playSound('success');
         triggerSuccessEffect(validatedCells, isMined ? ("-" + totalTurnScore) : ("+" + totalTurnScore), isMined);
         
+        // Animasyon süresince yeni hamle yapılmasını engelle, ama state zaten güncel
+        isConfirmAnimating = true;
         setTimeout(() => {
-            document.querySelectorAll('.tile:not(.fixed)').forEach(t => t.classList.add('fixed'));
-            tempTiles = [];
-            p.score += totalTurnScore;
-            firstMove = false;
-            
-            // FIX BUG 1: Olası firebase güncellemelerinde stale object reference'ı önlemek için Array'i güncelliyoruz
-            if (isOnlineMode) {
-                players[myPlayerIndex] = p;
-            } else {
-                players[currentPlayerIndex] = p;
-            }
+            isConfirmAnimating = false;
             
             if (p.rack.length === 0 && tileBag.length === 0) {
                 alert(`${p.name} tüm harflerini bitirdi! Oyun sonlanıyor.`);
@@ -1513,6 +1524,21 @@ async function checkWord() {
         playSound('error');
         alert("Geçerli bir kelime oluşturamadınız!");
         while (tempTiles.length > 0) undoTile(0);
+    }
+
+    } catch (error) {
+        console.error("checkWord hatası:", error);
+        isChecking = false;
+        isTimerPaused = false;
+        isConfirmAnimating = false;
+        document.querySelectorAll('.checking-anim').forEach(el => el.classList.remove('checking-anim'));
+        let pauseDuration = Date.now() - pauseStartTime;
+        turnStartTime += pauseDuration;
+        if (isOnlineMode) {
+            roomRef.update({ turnStartTime: turnStartTime });
+        }
+        updateUI();
+        alert("Bir hata oluştu, lütfen tekrar deneyin.");
     }
 }
 
