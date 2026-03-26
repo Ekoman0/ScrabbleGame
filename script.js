@@ -411,6 +411,7 @@ function createOnlineRoom() {
         listenToRoom(); 
         listenToChat(); 
         listenToEmojis(); 
+        listenToAnimations(); 
     }).catch(error => {
         alert("Bağlantı Hatası: " + error.message);
         createBtn.innerText = "Yeni Oda Kur";
@@ -462,6 +463,7 @@ function joinOnlineRoom() {
         listenToRoom(); 
         listenToChat(); 
         listenToEmojis();
+        listenToAnimations();
     }).catch(error => {
         alert("Bağlantı Hatası: " + error.message);
         joinBtn.innerText = "Odaya Katıl";
@@ -607,6 +609,49 @@ function listenToRoom() {
                 });
             }
             updateUI();
+        }
+    });
+}
+
+// ================= ANİMASYON YAYINI SİSTEMİ =================
+function broadcastAnimation(type, data) {
+    if (!isOnlineMode || !roomRef) return;
+    roomRef.child('animations').push({
+        type: type,
+        ...data,
+        sender: myPlayerId,
+        timestamp: firebase.database.ServerValue.TIMESTAMP
+    });
+}
+
+function listenToAnimations() {
+    roomRef.child('animations').on('child_added', snapshot => {
+        const anim = snapshot.val();
+        if (!anim || anim.sender === myPlayerId) return; // Kendi animasyonlarımı zaten görüyorum
+        if (Date.now() - anim.timestamp > 5000) return; // Eski animasyonları atla
+
+        if (anim.type === 'checking') {
+            // Diğer oyuncunun harflerini "doğrulanıyor" animasyonuyla göster
+            (anim.cellIndices || []).forEach(idx => {
+                let cell = document.getElementById(`cell-${idx}`);
+                if (cell) {
+                    let tileEl = cell.querySelector('.tile');
+                    if (tileEl) tileEl.classList.add('checking-anim');
+                }
+            });
+        } else if (anim.type === 'check_done') {
+            // Doğrulama animasyonunu temizle
+            document.querySelectorAll('.checking-anim').forEach(el => el.classList.remove('checking-anim'));
+        } else if (anim.type === 'success') {
+            // Başarılı kelime animasyonu
+            document.querySelectorAll('.checking-anim').forEach(el => el.classList.remove('checking-anim'));
+            let targetCells = (anim.cellIndices || []).map(idx => document.getElementById(`cell-${idx}`)).filter(c => c);
+            playSound('success');
+            triggerSuccessEffect(targetCells, anim.scoreText, anim.isMine);
+        } else if (anim.type === 'error') {
+            // Başarısız kelime denemesi
+            document.querySelectorAll('.checking-anim').forEach(el => el.classList.remove('checking-anim'));
+            playSound('error');
         }
     });
 }
@@ -1343,11 +1388,14 @@ async function checkWord() {
     
     // Doğrulanıyor Animasyonu ve UI
     document.getElementById('turn-info').innerHTML = `<span style="color:#f39c12; font-weight:bold;">⏳ TDK Doğrulanıyor...</span>`;
+    let checkingCellIndices = tempTiles.map(t => t.cellIndex);
     tempTiles.forEach(t => {
         let cell = document.getElementById(`cell-${t.cellIndex}`);
         let tileEl = cell.querySelector('.tile:not(.fixed)');
         if (tileEl) tileEl.classList.add('checking-anim');
     });
+    // Diğer oyunculara doğrulama animasyonunu yayınla
+    broadcastAnimation('checking', { cellIndices: checkingCellIndices });
 
     let validDefinitions = [];
 
@@ -1497,7 +1545,11 @@ async function checkWord() {
         updateUI();
 
         playSound('success');
-        triggerSuccessEffect(validatedCells, isMined ? ("-" + totalTurnScore) : ("+" + totalTurnScore), isMined);
+        let scoreText = isMined ? ("-" + totalTurnScore) : ("+" + totalTurnScore);
+        triggerSuccessEffect(validatedCells, scoreText, isMined);
+        // Diğer oyunculara başarı animasyonunu yayınla
+        let successCellIndices = validatedCells.map(c => parseInt(c.id.split('-')[1]));
+        broadcastAnimation('success', { cellIndices: successCellIndices, scoreText: scoreText, isMine: isMined });
         
         // Animasyon süresince yeni hamle yapılmasını engelle, ama state zaten güncel
         isConfirmAnimating = true;
@@ -1526,6 +1578,7 @@ async function checkWord() {
         updateUI(); 
 
         playSound('error');
+        broadcastAnimation('error', {});
         alert("Geçerli bir kelime oluşturamadınız!");
         while (tempTiles.length > 0) undoTile(0);
     }
