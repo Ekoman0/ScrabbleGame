@@ -1492,6 +1492,10 @@ async function checkWord() {
             players[currentPlayerIndex] = p;
         }
 
+        // FIX: Hemen Firebase'e push et, böylece listener tetiklendiğinde güncel veriyi kullanır
+        if (isOnlineMode) pushGameStateToFirebase();
+        updateUI();
+
         playSound('success');
         triggerSuccessEffect(validatedCells, isMined ? ("-" + totalTurnScore) : ("+" + totalTurnScore), isMined);
         
