@@ -20,6 +20,53 @@ let roomRef = null;
 let myPlayerIndex = -1; 
 let myPlayerId = null; 
 
+// ================= GAME STATE =================
+let currentPlayerIndex = 0;
+let playerCount = 0;
+let players = [];
+let tileBag = [];
+let draggedTileInfo = null;
+let firstMove = true;
+let tempTiles = [];
+let gameOverCountdown = -1;
+
+// ================= YENİ: SERVER TIME SİSTEMİ =================
+let serverTimeOffset = 0;
+firebase.database().ref(".info/serverTimeOffset").on("value", function(snap) {
+    serverTimeOffset = snap.val() || 0;
+});
+
+// ================= MAĞAZA VERİLERİ (LOCALSTORAGE) =================
+let playerData = {
+    gold: 5000,
+    owned: ['tile-default', 'chat-default', 'avatar-default', 'board-default', 'rack-default'],
+    equipped: { tile: 'tile-default', chat: 'chat-default', avatar: 'avatar-default', board: 'board-default', rack: 'rack-default' }
+};
+
+function loadPlayerData() {
+    let raw = localStorage.getItem('scrabble_playerData');
+    if (raw) {
+        let parsed = JSON.parse(raw);
+        playerData.gold = parsed.gold || 0;
+        playerData.owned = parsed.owned || ['tile-default', 'chat-default', 'avatar-default', 'board-default', 'rack-default'];
+        playerData.equipped = parsed.equipped || { tile: 'tile-default', chat: 'chat-default', avatar: 'avatar-default', board: 'board-default', rack: 'rack-default' };
+        
+        // Geriye dönük uyumluluk (Eski kayıtlara 'rack' ekle)
+        if (!playerData.owned.includes('rack-default')) playerData.owned.push('rack-default');
+        if (!playerData.equipped.rack) playerData.equipped.rack = 'rack-default';
+    }
+    
+    // TEST İÇİN: 5000 altından azsa 5000'e tamamla
+    if (playerData.gold < 5000) {
+        playerData.gold = 5000;
+        savePlayerData();
+    }
+}
+function savePlayerData() {
+    localStorage.setItem('scrabble_playerData', JSON.stringify(playerData));
+}
+// (loadPlayerData DOMContentLoaded içinde çağrılacak)
+
 // ================= YENİ: SES MOTORU (WEB AUDIO API) =================
 // Hiçbir dosya indirmeye gerek kalmadan elektronik olarak ses üretiyoruz!
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -80,7 +127,38 @@ function playSound(type) {
         gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.05);
         osc.start(now);
         osc.stop(now + 0.05);
+    } else if (type === 'your_turn') {
+        // Sıra Sende Sesi
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.2);
+        gainNode.gain.setValueAtTime(0.5, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+        osc.start(now);
+        osc.stop(now + 0.5);
     }
+}
+
+async function fetchWordDefinition(wordLower) {
+    try {
+        const response = await fetch(`https://sozluk.gov.tr/gts?ara=${wordLower}`);
+        const data = await response.json();
+        if (Array.isArray(data) && data[0].anlamlarListe && data[0].anlamlarListe[0]) {
+            return data[0].anlamlarListe[0].anlam;
+        }
+        return null;
+    } catch (e) {
+        try {
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent('https://sozluk.gov.tr/gts?ara=' + wordLower)}`;
+            const res2 = await fetch(proxyUrl);
+            const data2 = await res2.json();
+            if (Array.isArray(data2) && data2[0].anlamlarListe && data2[0].anlamlarListe[0]) {
+                return data2[0].anlamlarListe[0].anlam;
+            }
+        } catch(e2) { console.error("TDK çekilemedi", e2); }
+    }
+    return null;
 }
 
 // ================= OYUN AYARLARI & HARİTALAR =================
@@ -187,6 +265,8 @@ function updateQuestUI() {
 // ================= SÜRE (TIMER) SİSTEMİ =================
 let turnTimerInterval = null;
 let currentTimerValue = 0;
+let turnStartTime = 0;
+let isTimerPaused = false; 
 
 function startTurnTimer() {
     clearInterval(turnTimerInterval);
@@ -198,18 +278,27 @@ function startTurnTimer() {
     }
     
     timerDisplay.style.display = 'block';
-    currentTimerValue = gameSettings.timerValue;
-    document.getElementById('timer-val').innerText = currentTimerValue;
+    
+    if (!isOnlineMode) turnStartTime = Date.now();
 
     turnTimerInterval = setInterval(() => {
-        if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) {
-            currentTimerValue--;
-            document.getElementById('timer-val').innerText = currentTimerValue;
-            if(currentTimerValue <= 0) currentTimerValue = 0;
+        if (isTimerPaused) {
+            // Süre duraklatıldıysa turnStartTime'ı ileri iterek elapsed'ı sabit tutuyoruz
+            turnStartTime += 1000;
             return;
         }
 
-        currentTimerValue--;
+        let elapsed = 0;
+        if (isOnlineMode) {
+            let estimatedServerTimeMs = Date.now() + serverTimeOffset;
+            elapsed = Math.floor(( estimatedServerTimeMs - turnStartTime ) / 1000);
+        } else {
+            elapsed = Math.floor((Date.now() - turnStartTime) / 1000);
+        }
+        
+        currentTimerValue = gameSettings.timerValue - elapsed;
+        if (currentTimerValue < 0) currentTimerValue = 0;
+        
         document.getElementById('timer-val').innerText = currentTimerValue;
 
         // YENİ: Son 5 saniyede tik-tak sesi
@@ -219,8 +308,12 @@ function startTurnTimer() {
 
         if (currentTimerValue <= 0) {
             clearInterval(turnTimerInterval);
-            alert("Süreniz doldu! Sıra otomatik geçiyor.");
-            passTurn(true);
+            if (!isOnlineMode || currentPlayerIndex === myPlayerIndex) {
+                alert("Süreniz doldu! Sıra otomatik geçiyor.");
+                passTurn(true);
+            } else {
+                document.getElementById('timer-val').innerText = 0;
+            }
         }
     }, 1000);
 }
@@ -290,7 +383,8 @@ function createOnlineRoom() {
     players = [{ 
         id: myPlayerId,
         name: playerName, score: 0, rack: [],
-        comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0
+        comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0,
+        equipped: playerData.equipped
     }];
 
     if (gameSettings.surprisesEnabled) generateSurprises();
@@ -352,7 +446,8 @@ function joinOnlineRoom() {
         let newPlayer = { 
             id: myPlayerId,
             name: playerName, score: 0, rack: [],
-            comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0 
+            comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0,
+            equipped: playerData.equipped
         };
         players.push(newPlayer);
 
@@ -384,13 +479,29 @@ function startOnlineGame() {
     initializeBag();
     players.forEach(p => refillRack(p));
     
+    turnStartTime = Date.now() + serverTimeOffset;
+
     roomRef.update({ 
         status: 'playing',
         players: players,
         tileBag: tileBag, 
         currentPlayerIndex: 0,
+        turnStartTime: turnStartTime,
         quest: { questIndex: currentQuestIndex, questState: questState, questTurnCounter: questTurnCounter }
     });
+}
+
+function getAvatarIcon(id) {
+    const icons = {
+        'avatar-king': '👑', 'avatar-wizard': '🧙‍♂️', 'avatar-ninja': '🥷',
+        'avatar-alien': '👽', 'avatar-pirate': '🏴‍☠️', 'avatar-robot': '🤖',
+        'avatar-angel': '👼', 'avatar-devil': '😈', 'avatar-dragon': '🐉',
+        'avatar-ghost': '👻', 'avatar-vampire': '🧛', 'avatar-unicorn': '🦄',
+        'avatar-monkey': '🐵', 'avatar-pumpkin': '🎃', 'avatar-astronaut': '👨‍🚀',
+        'avatar-detective': '🕵️', 'avatar-scientist': '👨‍🔬', 'avatar-viking': '🪓',
+        'avatar-samurai': '⚔️'
+    };
+    return icons[id] || '👤';
 }
 
 // ================= ODA DİNLEYİCİSİ VE LOBİ =================
@@ -416,8 +527,16 @@ function listenToRoom() {
             updateQuestUI();
         }
 
+        if (data.status === 'finished') {
+            document.querySelectorAll('#board .tile:not(.fixed)').forEach(t => t.remove());
+            players = data.players || [];
+            endGame(true);
+            return;
+        }
+
         players = data.players || [];
         tileBag = data.tileBag || []; 
+        if (data.turnStartTime) turnStartTime = data.turnStartTime;
         
         if (myPlayerId) {
             myPlayerIndex = players.findIndex(p => p.id === myPlayerId);
@@ -426,6 +545,9 @@ function listenToRoom() {
         if (currentPlayerIndex !== data.currentPlayerIndex && data.status === 'playing') {
             currentPlayerIndex = data.currentPlayerIndex || 0;
             startTurnTimer();
+            if (isOnlineMode && currentPlayerIndex === myPlayerIndex) {
+                playSound('your_turn');
+            }
         } else {
             currentPlayerIndex = data.currentPlayerIndex || 0;
         }
@@ -436,7 +558,11 @@ function listenToRoom() {
         if (data.status === 'waiting') {
             document.getElementById('lobby-count').innerText = players.length;
             const listElement = document.getElementById('lobby-players-list');
-            listElement.innerHTML = players.map(p => `<li>${p.name}</li>`).join('');
+            listElement.innerHTML = players.map(p => {
+                let pAvatar = p.equipped && p.equipped.avatar ? p.equipped.avatar : 'avatar-default';
+                let icon = getAvatarIcon(pAvatar);
+                return `<li>${icon} ${p.name}</li>`;
+            }).join('');
         }
         
         if (data.status === 'playing' && document.getElementById('game-screen').style.display === 'none') {
@@ -459,7 +585,8 @@ function listenToRoom() {
                 let cell = document.getElementById(`cell-${item.index}`);
                 if (cell) {
                     let div = document.createElement('div');
-                    div.className = 'tile fixed';
+                    let skinInfo = item.skin || 'tile-default';
+                    div.className = `tile fixed ${skinInfo}`;
                     div.innerHTML = `<span class="letter">${item.letter}</span><span class="point">${item.points}</span>`;
                     cell.appendChild(div);
                 }
@@ -472,7 +599,8 @@ function listenToRoom() {
                     let cell = document.getElementById(`cell-${item.index}`);
                     if (cell) {
                         let div = document.createElement('div');
-                        div.className = 'tile'; 
+                        let skinInfo = item.skin || 'tile-default';
+                        div.className = `tile ${skinInfo}`; 
                         div.innerHTML = `<span class="letter">${item.letter}</span><span class="point">${item.points}</span>`;
                         cell.appendChild(div);
                     }
@@ -517,15 +645,38 @@ function triggerEmojiAnimation(emojiChar) {
 }
 
 // ================= CHAT SİSTEMİ =================
+function triggerFlyingChat(sender, text) {
+    const fxLayer = document.getElementById('fx-layer');
+    const el = document.createElement('div');
+    el.className = 'flying-chat';
+    el.innerHTML = `<b>${sender}:</b> ${text}`;
+    el.style.left = '50%';
+    el.style.transform = 'translateX(-50%)';
+    fxLayer.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+}
+
 function listenToChat() {
     roomRef.child('chat').on('child_added', snapshot => {
         const msg = snapshot.val();
+        
+        if (Date.now() - msg.timestamp < 5000 || !msg.timestamp) {
+            if (msg.sender !== players[myPlayerIndex].name) {
+                playSound('emoji'); 
+            }
+            triggerFlyingChat(msg.sender, msg.text);
+        }
+
         const msgDiv = document.createElement('div');
+        let chatSkin = msg.skin || 'chat-default';
         if (msg.sender === players[myPlayerIndex].name) {
-            msgDiv.className = 'chat-msg self';
-        } else {
+            msgDiv.className = `chat-msg self ${chatSkin}`;
+        } else if (msg.sender === "SİSTEM") {
             msgDiv.className = 'chat-msg';
-            playSound('emoji'); // Başkasından mesaj gelirse ufak bir bildirim sesi
+            msgDiv.style.backgroundColor = '#f39c12';
+            msgDiv.style.color = '#fff';
+        } else {
+            msgDiv.className = `chat-msg ${chatSkin}`;
         }
         msgDiv.innerHTML = `<span>${msg.sender}</span>${msg.text}`;
         const chatMessages = document.getElementById('chat-messages');
@@ -541,6 +692,7 @@ function sendChatMessage() {
     roomRef.child('chat').push({
         sender: players[myPlayerIndex].name,
         text: text,
+        skin: playerData.equipped.chat,
         timestamp: firebase.database.ServerValue.TIMESTAMP
     });
     input.value = "";
@@ -548,7 +700,7 @@ function sendChatMessage() {
 
 function handleChatKeyPress(e) { if (e.key === "Enter") sendChatMessage(); }
 
-function pushGameStateToFirebase() {
+function pushGameStateToFirebase(isFinished = false) {
     if (!isOnlineMode || !roomRef) return;
 
     let boardState = [];
@@ -556,27 +708,41 @@ function pushGameStateToFirebase() {
         let cell = document.getElementById(`cell-${i}`);
         let tile = cell.querySelector('.tile.fixed');
         if (tile) {
+            let skin = 'tile-default';
+            tile.classList.forEach(c => { if (c.startsWith('tile-') && c !== 'tile-default') skin = c; });
             boardState.push({
                 index: i,
                 letter: tile.querySelector('.letter').innerText,
-                points: parseInt(tile.querySelector('.point').innerText)
+                points: parseInt(tile.querySelector('.point').innerText),
+                skin: skin
             });
         }
     }
 
-    let tempBoardState = tempTiles.map(t => { return { index: t.cellIndex, letter: t.letter, points: t.points }; });
+    let tempBoardState = tempTiles.map(t => { 
+        return { 
+            index: t.cellIndex, 
+            letter: t.letter, 
+            points: t.points, 
+            skin: playerData.equipped.tile 
+        }; 
+    });
 
-    roomRef.update({
+    let updateData = {
         board: boardState,
         tempBoard: tempBoardState, 
         players: players,
         tileBag: tileBag,
         currentPlayerIndex: currentPlayerIndex,
+        turnStartTime: turnStartTime,
         firstMove: firstMove,
         hiddenSurprises: hiddenSurprises,
         frozenCells: frozenCells,
         quest: { questIndex: currentQuestIndex, questState: questState, questTurnCounter: questTurnCounter }
-    });
+    };
+    if (isFinished) updateData.status = 'finished';
+
+    roomRef.update(updateData);
 }
 
 // ================= DICTIONARY =================
@@ -597,15 +763,7 @@ async function loadDictionary() {
 }
 loadDictionary().then(set => { DICT = set; console.log("Sözlük yüklendi:", DICT.size); });
 
-// ================= GAME STATE =================
-let currentPlayerIndex = 0;
-let playerCount = 0;
-let players = [];
-let tileBag = [];
-let draggedTileInfo = null;
-let firstMove = true;
-let tempTiles = [];
-let gameOverCountdown = -1;
+// (Değişkenler dosya başına taşındı)
 
 const letterDistribution = [
     { letter: 'A', points: 1, count: 12 }, { letter: 'B', points: 3, count: 2 },
@@ -656,7 +814,8 @@ function startGameWithNames() {
         if(nameVal.trim() === "") nameVal = `Oyuncu ${i}`;
         players.push({ 
             name: nameVal, score: 0, rack: [],
-            comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0 
+            comboStreak: 0, longestWord: "", questsCompleted: 0, minesHit: 0, passCount: 0,
+            equipped: playerData.equipped
         });
     }
 
@@ -837,7 +996,9 @@ function renderTempTiles() {
     tempTiles.forEach((tile, index) => {
         const cell = document.getElementById(`cell-${tile.cellIndex}`);
         const tileDiv = document.createElement('div');
-        tileDiv.className = 'tile';
+        let rackOwnerIndex = isOnlineMode ? myPlayerIndex : currentPlayerIndex;
+        let pSkin = (players[rackOwnerIndex] && players[rackOwnerIndex].equipped) ? players[rackOwnerIndex].equipped.tile : 'tile-default';
+        tileDiv.className = `tile ${pSkin}`;
         tileDiv.innerHTML = `<span class="letter">${tile.letter}</span><span class="point">${tile.points}</span>`;
         tileDiv.onclick = () => undoTile(index);
         cell.appendChild(tileDiv);
@@ -858,7 +1019,9 @@ function undoTile(index) {
 
 function createTileElement(tile, rackIndex) {
     const div = document.createElement('div');
-    div.className = 'tile';
+    let rackOwnerIndex = isOnlineMode ? myPlayerIndex : currentPlayerIndex;
+    let pSkin = (players[rackOwnerIndex] && players[rackOwnerIndex].equipped) ? players[rackOwnerIndex].equipped.tile : 'tile-default';
+    div.className = `tile ${pSkin}`;
     div.draggable = true;
     div.innerHTML = `<span class="letter">${tile.letter}</span><span class="point">${tile.points}</span>`;
 
@@ -891,9 +1054,11 @@ function createTileElement(tile, rackIndex) {
 
 function updateUI() {
     const scoreBoard = document.getElementById('score-board');
-    scoreBoard.innerHTML = players.map((p, i) =>
-        `<div style="${i === currentPlayerIndex ? 'color:red;font-weight:bold;' : ''}">${p.name}: ${p.score}</div>`
-    ).join('');
+    scoreBoard.innerHTML = players.map((p, i) => {
+        let pAvatar = p.equipped && p.equipped.avatar ? p.equipped.avatar : 'avatar-default';
+        let icon = getAvatarIcon(pAvatar);
+        return `<div style="${i === currentPlayerIndex ? 'color:red;font-weight:bold;' : ''}">${icon} ${p.name}: ${p.score}</div>`;
+    }).join('');
 
     document.getElementById('bag-count').innerText = tileBag.length;
     
@@ -917,9 +1082,13 @@ function updateUI() {
 
     const rackElement = document.getElementById('player-rack');
     rackElement.innerHTML = '';
+    rackElement.className = 'rack-container';
     
     let rackOwnerIndex = isOnlineMode ? myPlayerIndex : currentPlayerIndex;
     if (players[rackOwnerIndex]) {
+        let pRackSkin = players[rackOwnerIndex].equipped && players[rackOwnerIndex].equipped.rack ? players[rackOwnerIndex].equipped.rack : 'rack-default';
+        if (pRackSkin !== 'rack-default') rackElement.classList.add(pRackSkin);
+
         if ((players[rackOwnerIndex].comboStreak || 0) >= 3) {
             rackElement.classList.add('on-fire');
         } else {
@@ -936,6 +1105,7 @@ function updateUI() {
 }
 
 function passTurn(isManualPass = false) {
+    isTimerPaused = false; 
     if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Şu an sıra sizde değil!"); return; }
     
     sabotageMode = null; 
@@ -967,7 +1137,13 @@ function passTurn(isManualPass = false) {
 
     currentPlayerIndex = (currentPlayerIndex + 1) % playerCount;
     
-    if (!isOnlineMode) startTurnTimer(); 
+    if (isOnlineMode) {
+        turnStartTime = Date.now() + serverTimeOffset;
+    } else {
+        turnStartTime = Date.now();
+        startTurnTimer(); 
+    }
+    
     updateUI();
 
     if (isOnlineMode) pushGameStateToFirebase();
@@ -995,8 +1171,13 @@ function swapLetters() {
     passTurn(); 
 }
 
-function endGame() {
+function endGame(skipFirebase = false) {
+    if (document.getElementById('oscar-modal').style.display === 'flex') return;
     window.onbeforeunload = null;
+
+    if (isOnlineMode && roomRef && !skipFirebase) {
+        pushGameStateToFirebase(true);
+    }
 
     let winner = players.reduce((prev, current) => (prev.score > current.score) ? prev : current);
     let cambaz = players.reduce((prev, current) => ((prev.longestWord||"").length > (current.longestWord||"").length) ? prev : current);
@@ -1009,6 +1190,18 @@ function endGame() {
     document.getElementById('oscar-quests').innerText = `${gorevci.name} - ${gorevci.questsCompleted || 0} Görev`;
     document.getElementById('oscar-mines').innerText = `${esek.name} - ${esek.minesHit || 0} Kez Sürprize Denk Geldi`;
     document.getElementById('oscar-passes').innerText = `${bariscil.name} - ${bariscil.passCount || 0} Kez Pas/Değişim`;
+
+    let myScore = 0;
+    if (isOnlineMode && myPlayerIndex >= 0 && players[myPlayerIndex]) {
+        myScore = players[myPlayerIndex].score;
+    } else if (!isOnlineMode && players.length > 0) {
+        myScore = players[0].score;
+    }
+    if (myScore > 0) {
+        playerData.gold += myScore;
+        savePlayerData();
+        updateGoldDisplay();
+    }
 
     playSound('success'); // Oyun bitiş sesi
     document.getElementById('oscar-modal').style.display = 'flex';
@@ -1060,8 +1253,11 @@ function triggerSuccessEffect(targetCells, scoreGained, isMine = false) {
 
 // ================= WORD CHECK LOGIC =================
 
-function checkWord() {
+let isChecking = false;
+
+async function checkWord() {
     if (isOnlineMode && currentPlayerIndex !== myPlayerIndex) { alert("Sıra sizde değil!"); return; }
+    if (isChecking) return;
     if (!DICT || tempTiles.length === 0) return;
 
     let isConnected = false;
@@ -1097,6 +1293,7 @@ function checkWord() {
     let validNewTileIndices = new Set(); 
 
     let activeMap = MAPS[gameSettings.mapType] || MAPS.classic;
+    let candidates = [];
 
     const scanAll = (isHorizontal) => {
         for (let i = 0; i < 15; i++) {
@@ -1122,32 +1319,52 @@ function checkWord() {
                     word += letter; pSum += p;
                     currentWordCells.push(document.getElementById(`cell-${idx}`));
                 } else {
-                    if (word.length > 1 && hasNew) {
-                        if (DICT.has(word)) {
-                            totalTurnScore += (pSum * wMult); 
-                            anyValidWord = true;
-                            validatedCells.push(...currentWordCells);
-                            formedWords.push(word);
-                            currentNewIndices.forEach(id => validNewTileIndices.add(id));
-                        }
-                    }
+                    if (word.length > 1 && hasNew) candidates.push({ word, pSum, wMult, currentWordCells, currentNewIndices });
                     word = ""; pSum = 0; wMult = 1; hasNew = false; currentWordCells = []; currentNewIndices = [];
                 }
             }
-            if (word.length > 1 && hasNew) {
-                if (DICT.has(word)) {
-                    totalTurnScore += (pSum * wMult); 
-                    anyValidWord = true;
-                    validatedCells.push(...currentWordCells);
-                    formedWords.push(word);
-                    currentNewIndices.forEach(id => validNewTileIndices.add(id));
-                }
-            }
+            if (word.length > 1 && hasNew) candidates.push({ word, pSum, wMult, currentWordCells, currentNewIndices });
         }
     };
 
     scanAll(true);
     scanAll(false);
+
+    isChecking = true;
+    isTimerPaused = true;
+    let pauseStartTime = Date.now();
+    
+    // Doğrulanıyor Animasyonu ve UI
+    document.getElementById('turn-info').innerHTML = `<span style="color:#f39c12; font-weight:bold;">⏳ TDK Doğrulanıyor...</span>`;
+    tempTiles.forEach(t => {
+        let cell = document.getElementById(`cell-${t.cellIndex}`);
+        let tileEl = cell.querySelector('.tile:not(.fixed)');
+        if (tileEl) tileEl.classList.add('checking-anim');
+    });
+
+    let validDefinitions = [];
+
+    for (let c of candidates) {
+        let isLocalValid = DICT && DICT.has(c.word);
+        let definition = await fetchWordDefinition(c.word.toLocaleLowerCase('tr'));
+        let isValidFromTdk = definition !== null;
+        
+        if (isValidFromTdk) {
+            validDefinitions.push({ word: c.word, def: definition });
+            if (DICT) DICT.add(c.word); 
+        } else if (isLocalValid) {
+            validDefinitions.push({ word: c.word, def: "Sözlükte bulundu ancak TDK API'de tanımı yok." });
+        }
+        
+        if (isValidFromTdk || isLocalValid) {
+            totalTurnScore += (c.pSum * c.wMult); 
+            anyValidWord = true;
+            validatedCells.push(...c.currentWordCells);
+            formedWords.push(c.word);
+            c.currentNewIndices.forEach(id => validNewTileIndices.add(id));
+        }
+    }
+    isChecking = false;
 
     if (anyValidWord) {
         let p = isOnlineMode ? players[myPlayerIndex] : players[currentPlayerIndex];
@@ -1206,6 +1423,18 @@ function checkWord() {
             }
         }
 
+        if (validDefinitions.length > 0 && isOnlineMode) {
+            let defsWithMeaning = validDefinitions.filter(d => d.def !== "Sözlükte bulundu ancak TDK API'de tanımı yok.");
+            if (defsWithMeaning.length > 0) {
+                let randDef = defsWithMeaning[Math.floor(Math.random() * defsWithMeaning.length)];
+                roomRef.child('chat').push({
+                    sender: "SİSTEM",
+                    text: `🤓 İlginç Bilgi: ${randDef.word} - ${randDef.def}`,
+                    timestamp: firebase.database.ServerValue.TIMESTAMP
+                });
+            }
+        }
+
         if (gameSettings.surprisesEnabled) {
             validatedCells.forEach(cell => {
                 let idx = parseInt(cell.id.split('-')[1]);
@@ -1240,6 +1469,9 @@ function checkWord() {
                 }
             });
         }
+        
+        // Doğrulanıyor animasyonunu temizle
+        document.querySelectorAll('.checking-anim').forEach(el => el.classList.remove('checking-anim'));
 
         playSound('success'); // Standart puan sesi
         triggerSuccessEffect(validatedCells, isMined ? ("-" + totalTurnScore) : ("+" + totalTurnScore), isMined);
@@ -1250,8 +1482,16 @@ function checkWord() {
             p.score += totalTurnScore;
             firstMove = false;
             
+            // FIX BUG 1: Olası firebase güncellemelerinde stale object reference'ı önlemek için Array'i güncelliyoruz
+            if (isOnlineMode) {
+                players[myPlayerIndex] = p;
+            } else {
+                players[currentPlayerIndex] = p;
+            }
+            
             if (p.rack.length === 0 && tileBag.length === 0) {
                 alert(`${p.name} tüm harflerini bitirdi! Oyun sonlanıyor.`);
+                pushGameStateToFirebase(true);
                 endGame();
                 return;
             }
@@ -1260,8 +1500,253 @@ function checkWord() {
         }, 1000); 
         
     } else {
+        isTimerPaused = false;
+        let pauseDuration = Date.now() - pauseStartTime;
+        turnStartTime += pauseDuration;
+        if (isOnlineMode) {
+            roomRef.update({ turnStartTime: turnStartTime });
+        }
+
+        document.querySelectorAll('.checking-anim').forEach(el => el.classList.remove('checking-anim'));
+        updateUI(); 
+
         playSound('error');
         alert("Geçerli bir kelime oluşturamadınız!");
         while (tempTiles.length > 0) undoTile(0);
     }
 }
+
+// ================= MAĞAZA (SHOP) KONTROLCÜSÜ =================
+
+const SHOP_ITEMS = {
+    tiles: [
+        { id: 'tile-default', name: 'Klasik Ahşap', price: 0, preview: 'A' },
+        { id: 'tile-gold', name: 'Altın Kaplama', price: 100, preview: 'A', class: 'tile-gold' },
+        { id: 'tile-neon', name: 'Siber Neon', price: 100, preview: 'A', class: 'tile-neon' },
+        { id: 'tile-diamond', name: 'Buzul Elmas', price: 100, preview: 'A', class: 'tile-diamond' },
+        { id: 'tile-ruby', name: 'Ateş Yakut', price: 100, preview: 'A', class: 'tile-ruby' },
+        { id: 'tile-emerald', name: 'Zümrüt Yeşili', price: 100, preview: 'Z', class: 'tile-emerald' },
+        { id: 'tile-obsidian', name: 'Gece Karası', price: 100, preview: 'A', class: 'tile-obsidian' },
+        { id: 'tile-rainbow', name: 'Gökkuşağı', price: 100, preview: 'W', class: 'tile-rainbow' },
+        { id: 'tile-magic', name: 'Büyülü Aura 🌀', price: 100, preview: 'M', class: 'tile-magic' },
+        { id: 'tile-electric', name: 'Yüksek Gerilim ⚡', price: 100, preview: 'E', class: 'tile-electric' },
+        { id: 'tile-hologram', name: 'Hologram', price: 100, preview: 'H', class: 'tile-hologram' },
+        { id: 'tile-fire', name: 'Alev Alev', price: 100, preview: 'F', class: 'tile-fire' },
+        { id: 'tile-water', name: 'Okyanus Dalgası', price: 100, preview: 'O', class: 'tile-water' },
+        { id: 'tile-toxic', name: 'Zehirli Asit', price: 100, preview: 'Z', class: 'tile-toxic' },
+        { id: 'tile-cyber', name: 'Siber Şeffaf', price: 100, preview: 'C', class: 'tile-cyber' },
+        { id: 'tile-lava', name: 'Magma Çekirdek', price: 100, preview: 'L', class: 'tile-lava' },
+        { id: 'tile-ghost', name: 'Ruhani Gölge', price: 100, preview: 'G', class: 'tile-ghost' },
+        { id: 'tile-royal', name: 'Kraliyet Kadifesi', price: 100, preview: 'K', class: 'tile-royal' },
+        { id: 'tile-matrix', name: 'Sayısal Kod', price: 100, preview: '1', class: 'tile-matrix' },
+        { id: 'tile-candy', name: 'Şeker Diyarı', price: 100, preview: 'S', class: 'tile-candy' }
+    ],
+    racks: [
+        { id: 'rack-default', name: 'Klasik Ahşap', price: 0, class: '' },
+        { id: 'rack-neon', name: 'Neon Çerçeve', price: 100, class: 'rack-neon' },
+        { id: 'rack-lava', name: 'Akan Lav', price: 100, class: 'rack-lava' },
+        { id: 'rack-ice', name: 'Buzul', price: 100, class: 'rack-ice' },
+        { id: 'rack-gold', name: 'Altın Varak', price: 100, class: 'rack-gold' },
+        { id: 'rack-void', name: 'Kara Delik', price: 100, class: 'rack-void' },
+        { id: 'rack-cyber', name: 'Yüksek Teknoloji', price: 100, class: 'rack-cyber' },
+        { id: 'rack-forest', name: 'Sarmaşık Sarılı', price: 100, class: 'rack-forest' },
+        { id: 'rack-royal', name: 'İmparatorluk', price: 100, class: 'rack-royal' },
+        { id: 'rack-blood', name: 'Vampir Tabutu', price: 100, class: 'rack-blood' },
+        { id: 'rack-disco', name: 'Disko Pist', price: 100, class: 'rack-disco' }
+    ],
+    chats: [
+        { id: 'chat-default', name: 'Standart', price: 0 },
+        { id: 'chat-vip', name: 'VIP Altın', price: 100, class: 'chat-vip' },
+        { id: 'chat-neon', name: 'Zehirli Yeşil', price: 100, class: 'chat-neon' },
+        { id: 'chat-matrix', name: 'Hacker Matrix', price: 100, class: 'chat-matrix' },
+        { id: 'chat-love', name: 'Sevgi Balonu', price: 100, class: 'chat-love' },
+        { id: 'chat-fire', name: 'Alevli İsyankar', price: 100, class: 'chat-fire' },
+        { id: 'chat-cloud', name: 'Mavi Bulut', price: 100, class: 'chat-cloud' },
+        { id: 'chat-ice', name: 'Buz Sarkıtları', price: 100, class: 'chat-ice' },
+        { id: 'chat-galaxy', name: 'Galaksi', price: 100, class: 'chat-galaxy' },
+        { id: 'chat-royal', name: 'Kraliyet Moru', price: 100, class: 'chat-royal' },
+        { id: 'chat-blood', name: 'Kan Kırmızı', price: 100, class: 'chat-blood' },
+        { id: 'chat-party', name: 'Disko Parti', price: 100, class: 'chat-party' },
+        { id: 'chat-retro', name: '8-Bit Retro', price: 100, class: 'chat-retro' },
+        { id: 'chat-paper', name: 'Kağıt Uçak', price: 100, class: 'chat-paper' },
+        { id: 'chat-ghost', name: 'Fısıltı', price: 100, class: 'chat-ghost' },
+        { id: 'chat-gold-edge', name: 'Zengin Çizgisi', price: 100, class: 'chat-gold-edge' },
+        { id: 'chat-tech', name: 'Teknik Kod', price: 100, class: 'chat-tech' }
+    ],
+    avatars: [
+        { id: 'avatar-default', name: 'Anonim', price: 0, icon: '👤' },
+        { id: 'avatar-king', name: 'Kral', price: 100, icon: '👑' },
+        { id: 'avatar-wizard', name: 'Büyücü', price: 100, icon: '🧙‍♂️' },
+        { id: 'avatar-ninja', name: 'Ninja', price: 100, icon: '🥷' },
+        { id: 'avatar-alien', name: 'Uzaylı', price: 100, icon: '👽' },
+        { id: 'avatar-pirate', name: 'Korsan', price: 100, icon: '🏴‍☠️' },
+        { id: 'avatar-robot', name: 'Robot', price: 100, icon: '🤖' },
+        { id: 'avatar-angel', name: 'Melek', price: 100, icon: '👼' },
+        { id: 'avatar-devil', name: 'Şeytan', price: 100, icon: '😈' },
+        { id: 'avatar-dragon', name: 'Ejderha', price: 100, icon: '🐉' },
+        { id: 'avatar-ghost', name: 'Hayalet', price: 100, icon: '👻' },
+        { id: 'avatar-vampire', name: 'Vampir', price: 100, icon: '🧛' },
+        { id: 'avatar-unicorn', name: 'Tekboynuz', price: 100, icon: '🦄' },
+        { id: 'avatar-monkey', name: 'Maymun Kral', price: 100, icon: '🐵' },
+        { id: 'avatar-pumpkin', name: 'Balkabağı', price: 100, icon: '🎃' },
+        { id: 'avatar-astronaut', name: 'Astronot', price: 100, icon: '👨‍🚀' },
+        { id: 'avatar-detective', name: 'Detektif', price: 100, icon: '🕵️' },
+        { id: 'avatar-scientist', name: 'Bilim İnsanı', price: 100, icon: '👨‍🔬' },
+        { id: 'avatar-viking', name: 'Viking', price: 100, icon: '🪓' },
+        { id: 'avatar-samurai', name: 'Samuray', price: 100, icon: '🎎' }
+    ],
+    boards: [
+        { id: 'board-default', name: 'Klasik Beyaz', price: 0 },
+        { id: 'board-parchment', name: 'Eski Parşömen', price: 100, class: 'board-parchment' },
+        { id: 'board-space', name: 'Derin Uzay', price: 100, class: 'board-space' },
+        { id: 'board-soccer', name: 'Futbol Sahası', price: 100, class: 'board-soccer' },
+        { id: 'board-snow', name: 'Kış Masalı', price: 100, class: 'board-snow' },
+        { id: 'board-lava', name: 'Cehennem Ateşi', price: 100, class: 'board-lava' },
+        { id: 'board-cyberpunk', name: 'Siberpunk', price: 100, class: 'board-cyberpunk' },
+        { id: 'board-ocean', name: 'Okyanus Dibi', price: 100, class: 'board-ocean' },
+        { id: 'board-desert', name: 'Kızgın Çöl', price: 100, class: 'board-desert' },
+        { id: 'board-casino', name: 'Casino Masası', price: 100, class: 'board-casino' },
+        { id: 'board-hacker', name: 'Matrix Kodları', price: 100, class: 'board-hacker' },
+        { id: 'board-palace', name: 'Altın Saray', price: 100, class: 'board-palace' },
+        { id: 'board-haunted', name: 'Korku Evi', price: 100, class: 'board-haunted' },
+        { id: 'board-nature', name: 'Doğa Ana', price: 100, class: 'board-nature' },
+        { id: 'board-egypt', name: 'Antik Mısır', price: 100, class: 'board-egypt' },
+        { id: 'board-volcano', name: 'Yanardağ', price: 100, class: 'board-volcano' }
+    ]
+};
+
+function updateGoldDisplay() {
+    let g = document.getElementById('player-gold-display');
+    if (g) g.innerText = `💰 ${playerData.gold} Altın`;
+    let sg = document.getElementById('shop-gold-display');
+    if (sg) sg.innerText = `Bakiye: ${playerData.gold} Altın`;
+}
+
+function openShopModal() {
+    updateGoldDisplay();
+    document.getElementById('shop-modal').style.display = 'flex';
+    openShopTab('tiles');
+}
+
+function openShopTab(tabName) {
+    document.querySelectorAll('.shop-tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.shop-content').forEach(c => c.style.display = 'none');
+    
+    // Event üzerinden gelindiyse aktifi işaretle
+    if (window.event && window.event.currentTarget && window.event.currentTarget.classList) {
+        window.event.currentTarget.classList.add('active');
+    } else {
+        // Doğrudan çağrıldıysa (ilk açılış) ilgili butonu bul ve aktif et
+        const btns = document.querySelectorAll('.shop-tab-btn');
+        btns.forEach(b => { if(b.getAttribute('onclick').includes(tabName)) b.classList.add('active'); });
+    }
+    
+    const content = document.getElementById(`shop-content-${tabName}`);
+    if (content) {
+        content.style.display = 'grid';
+        renderShopItems(tabName);
+    }
+}
+
+function renderShopItems(category) {
+    let container = document.getElementById(`shop-content-${category}`);
+    container.innerHTML = '';
+    
+    // Category mapping to equip key
+    let eqKey = category === 'tiles' ? 'tile' : (category === 'racks' ? 'rack' : (category === 'chats' ? 'chat' : (category === 'avatars' ? 'avatar' : 'board')));
+
+    SHOP_ITEMS[category].forEach(item => {
+        let isOwned = playerData.owned.includes(item.id);
+        let isEquipped = playerData.equipped[eqKey] === item.id;
+
+        let btnHtml = '';
+        if (isEquipped) {
+            btnHtml = `<button disabled style="background:#2ecc71; color:white; border:none; padding:8px 5px; border-radius:5px; cursor:not-allowed; width:100%; font-weight:bold; font-size:13px;">✅ Kuşanıldı</button>`;
+        } else if (isOwned) {
+            btnHtml = `<button onclick="equipShopItem('${eqKey}', '${item.id}')" style="background:#3498db; color:white; border:none; padding:8px 5px; border-radius:5px; cursor:pointer; width:100%; font-weight:bold; font-size:13px;">Kuşan (Sende Var)</button>`;
+        } else {
+            btnHtml = `<button onclick="buyShopItem('${item.id}', ${item.price})" style="background:#e67e22; color:white; border:none; padding:8px 5px; border-radius:5px; cursor:pointer; width:100%; font-weight:bold; font-size:13px;">Satın Al: ${item.price} 💰</button>`;
+        }
+
+        let previewHtml = '';
+        if (category === 'tiles') {
+            previewHtml = `<div class="tile ${item.class || ''}" style="width: 44px; height: 44px; display:flex; margin: 10px auto; position:relative; transform: scale(1.2); flex-shrink:0;"><span class="letter">${item.preview}</span><span class="point">1</span></div>`;
+        } else if (category === 'racks') {
+            previewHtml = `<div class="rack-container ${item.class || ''}" style="margin: 10px auto; width:100%; height:30px; display:flex; align-items:center; justify-content:center; box-shadow:none; font-size:12px; color:transparent;">■■■</div>`;
+        } else if (category === 'chats') {
+            previewHtml = `<div class="chat-msg ${item.class || ''}" style="margin: 10px auto; width:90%; text-align:center;">Örnek Mesaj</div>`;
+        } else if (category === 'avatars') {
+            previewHtml = `<div style="font-size:50px; text-align:center; margin: 10px 0;">${item.icon}</div>`;
+        } else if (category === 'boards') {
+            previewHtml = `<div style="height:60px; border-radius:5px; margin: 10px 0; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:bold;" class="${item.class || 'board-default'}" ${!item.class ? 'style="background:#f4f4f4; color:#333;"' : ''}>${item.name}</div>`;
+        }
+
+        container.innerHTML += `
+            <div style="background:#fff; padding:12px; border-radius:10px; border:2px solid #ecf0f1; box-shadow:0 4px 6px rgba(0,0,0,0.05); text-align:center; display:flex; flex-direction:column; justify-content:space-between; align-items:center;">
+                <div style="width: 100%;">
+                    ${previewHtml}
+                    <div style="font-weight:bold; font-size:14px; margin-bottom:10px; color:#2c3e50; line-height:1.2;">${item.name}</div>
+                </div>
+                ${btnHtml}
+            </div>
+        `;
+    });
+}
+
+function buyShopItem(itemId, price) {
+    if (playerData.gold < price) {
+        playSound('error');
+        alert("Yeterli altınınız yok! Oyun oynayarak altın kazanabilirsiniz.");
+        return;
+    }
+    playerData.gold -= price;
+    playerData.owned.push(itemId);
+    savePlayerData();
+    playSound('success');
+    
+    let cat = itemId.startsWith('tile') ? 'tiles' : 
+              (itemId.startsWith('chat') ? 'chats' : 
+              (itemId.startsWith('avatar') ? 'avatars' : 
+              (itemId.startsWith('rack') ? 'racks' : 'boards')));
+    updateGoldDisplay();
+    renderShopItems(cat);
+}
+
+function equipShopItem(category, itemId) {
+    playerData.equipped[category] = itemId;
+    savePlayerData();
+    
+    // YENİ: Oyuncunun mevcut oyun verisindeki kuşanmış eşyalarını güncelle
+    let pIdx = isOnlineMode ? myPlayerIndex : currentPlayerIndex;
+    if (players[pIdx]) {
+        if (!players[pIdx].equipped) players[pIdx].equipped = {};
+        players[pIdx].equipped[category] = itemId;
+        
+        // Eğer online ise diğerlerine de duyur (Örn: avatar değişince görsünler)
+        if (isOnlineMode) pushGameStateToFirebase();
+    }
+    
+    playSound('click');
+    
+    if (category === 'board') applyBoardTheme();
+    
+    updateUI(); // Harf/Istaka skini anında değişsin
+    renderShopItems(category + 's');
+}
+
+function applyBoardTheme() {
+    let bc = document.getElementById('board-container');
+    if (!bc) return;
+    bc.className = ''; 
+    if (playerData.equipped.board !== 'board-default') {
+        bc.classList.add(playerData.equipped.board);
+    }
+}
+
+// Başlangıç yüklemeleri
+document.addEventListener('DOMContentLoaded', () => {
+    loadPlayerData();
+    updateGoldDisplay();
+    applyBoardTheme();
+});
+

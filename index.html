@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Türkçe Kelime Oyunu</title>
-    <link rel="stylesheet" href="style.css?v=3.0">
+    <link rel="stylesheet" href="style.css?v=3.2">
     
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
@@ -12,11 +12,16 @@
 <body>
 
     <div id="menu-screen" class="screen">
-        <h1>Kelime Oyunu</h1>
+        <div id="gold-display" style="position: absolute; top: 15px; right: 20px; font-weight: bold; color: #f1c40f; font-size: 20px; text-shadow: 1px 1px 2px #000; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 8px; z-index: 100;">
+            <span id="player-gold-display">💰 0 Altın</span>
+        </div>
+        
+        <h1 style="margin-top: 50px;">Kelime Oyunu</h1>
         
         <div id="mode-selection" class="button-group">
             <button onclick="showOfflineMenu()" style="background-color: #f39c12;">Çevrimdışı (Aynı Cihazda) Oyna</button>
             <button onclick="showOnlineMenu()" style="background-color: #8e44ad;">Çevrimiçi (İnternetten) Oyna</button>
+            <button onclick="openShopModal()" style="background-color: #27ae60; margin-top: 15px;">🛍️ Mağazaya Git</button>
         </div>
 
         <div id="settings-panel" style="display: none;" class="lobby-card">
@@ -80,11 +85,9 @@
                 </div>
             </div>
         </div>
-
     </div>
 
     <div id="game-screen" class="screen" style="display: none;">
-        
         <div class="top-bar">
             <div id="timer-display" style="display:none; font-size:18px; color:#e74c3c; font-weight:bold; margin-bottom:5px;">
                 ⏳ <span id="timer-val">60</span>s
@@ -107,19 +110,15 @@
 
         <div id="controls">
             <h3 id="turn-info">Sıra: Oyuncu 1</h3>
-            
             <div id="player-rack" class="rack-container"></div>
-
             <div id="sabotage-panel" style="display: none; justify-content: center; gap: 6px; margin-bottom: 8px;">
                 <button class="action-btn" style="background-color: #3498db;" onclick="prepareSabotage('freeze')">❄️ Buz At (-15p)</button>
             </div>
-            
             <div class="action-buttons">
                 <button class="action-btn pass-btn" onclick="passTurn(true)">Pas Geç</button>
                 <button id="swap-btn" class="action-btn swap-btn" onclick="swapLetters()">Harf Değiştir</button>
                 <button class="action-btn confirm-btn" onclick="checkWord()">Onayla</button>
             </div>
-
             <div id="emoji-bar">
                 <button onclick="sendEmoji('👏')">👏</button>
                 <button onclick="sendEmoji('😂')">😂</button>
@@ -138,7 +137,6 @@
                 <button onclick="sendChatMessage()">Gönder</button>
             </div>
         </div>
-
     </div>
 
     <div id="oscar-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 100000; justify-content: center; align-items: center;">
@@ -153,6 +151,28 @@
                 <p><b>🕊️ Barışçıl (En Çok Pas/Değişim):</b> <br><span id="oscar-passes">...</span></p>
             </div>
             <button onclick="location.reload()" style="background-color: #3498db; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%; margin-top: 10px;">Ana Menüye Dön</button>
+        </div>
+    </div>
+
+    <div id="shop-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100000; justify-content: center; align-items: center;">
+        <div class="lobby-card" style="width: 90%; max-width: 600px; text-align: center; overflow-y: auto; max-height: 90vh; padding: 20px;">
+            <button onclick="document.getElementById('shop-modal').style.display='none'" style="float:right; background:#c0392b; color:white; border:none; border-radius:3px; padding:5px 12px; font-size: 16px; cursor:pointer;">X</button>
+            <h2 style="color: #f1c40f; margin-top: 0;">🛍️ MAĞAZA</h2>
+            <h3 style="color: #e67e22; margin-top: 5px;" id="shop-gold-display">Bakiye: 0 Altın</h3>
+            
+            <div id="shop-tabs" style="display:flex; justify-content:space-around; margin:15px 0; border-bottom: 2px solid #ccc; padding-bottom:5px; flex-wrap: wrap; gap: 5px;">
+                <button class="shop-tab-btn active" onclick="openShopTab('tiles')">Harfler</button>
+                <button class="shop-tab-btn" onclick="openShopTab('racks')">Istaka</button>
+                <button class="shop-tab-btn" onclick="openShopTab('chats')">Mesajlar</button>
+                <button class="shop-tab-btn" onclick="openShopTab('avatars')">Avatarlar</button>
+                <button class="shop-tab-btn" onclick="openShopTab('boards')">Zemin</button>
+            </div>
+            
+            <div id="shop-content-tiles" class="shop-content" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:15px; margin-top: 15px;"></div>
+            <div id="shop-content-racks" class="shop-content" style="display:none; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:15px; margin-top: 15px;"></div>
+            <div id="shop-content-chats" class="shop-content" style="display:none; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:15px; margin-top: 15px;"></div>
+            <div id="shop-content-avatars" class="shop-content" style="display:none; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:15px; margin-top: 15px;"></div>
+            <div id="shop-content-boards" class="shop-content" style="display:none; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:15px; margin-top: 15px;"></div>
         </div>
     </div>
 
